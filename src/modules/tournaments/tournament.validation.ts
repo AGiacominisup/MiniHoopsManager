@@ -3,11 +3,26 @@ import { z } from "zod";
 export const createTournamentSchema = z
   .object({
     name: z.string().min(3),
-    season: z.string().min(3),
-    location: z.string().min(2).optional(),
     startDate: z.string().datetime(),
     endDate: z.string().datetime(),
-    ageCategory: z.string().min(2)
+    category: z.string().min(2).optional(),
+    winPoints: z.number().int().min(1).optional(),
+    status: z.enum(["planned", "in_progress", "completed"]).optional(),
+    courts: z
+      .array(
+        z.object({
+          name: z.string().min(1)
+        })
+      )
+      .optional(),
+    finalGroups: z
+      .array(
+        z.object({
+          themeName: z.string().min(1),
+          level: z.number().int().min(1)
+        })
+      )
+      .optional()
   })
   .refine((data) => new Date(data.endDate) >= new Date(data.startDate), {
     message: "endDate must be after startDate",

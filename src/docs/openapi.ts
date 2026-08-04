@@ -3,7 +3,7 @@ export const openApiSpec = {
   info: {
     title: "MiniHoopsManager API",
     version: "1.0.0",
-    description: "API per la gestione di tornei minibasket"
+    description: "API for managing youth mini-basket tournaments"
   },
   servers: [
     {
@@ -59,14 +59,35 @@ export const openApiSpec = {
       },
       CreateTournamentRequest: {
         type: "object",
-        required: ["name", "season", "startDate", "endDate", "ageCategory"],
+        required: ["name", "startDate", "endDate"],
         properties: {
-          name: { type: "string", example: "Torneo Primavera" },
-          season: { type: "string", example: "2026" },
-          location: { type: "string", example: "Milano" },
+          name: { type: "string", example: "Spring Tournament" },
           startDate: { type: "string", format: "date-time", example: "2026-09-10T09:00:00.000Z" },
           endDate: { type: "string", format: "date-time", example: "2026-09-12T18:00:00.000Z" },
-          ageCategory: { type: "string", example: "U12" }
+          category: { type: "string", example: "U12" },
+          winPoints: { type: "integer", example: 10 },
+          status: { type: "string", enum: ["planned", "in_progress", "completed"], example: "planned" },
+          courts: {
+            type: "array",
+            items: {
+              type: "object",
+              required: ["name"],
+              properties: {
+                name: { type: "string", example: "Court 1" }
+              }
+            }
+          },
+          finalGroups: {
+            type: "array",
+            items: {
+              type: "object",
+              required: ["themeName", "level"],
+              properties: {
+                themeName: { type: "string", example: "Lakers" },
+                level: { type: "integer", example: 1 }
+              }
+            }
+          }
         }
       },
       Tournament: {
@@ -74,12 +95,32 @@ export const openApiSpec = {
         properties: {
           _id: { type: "string" },
           name: { type: "string" },
-          season: { type: "string" },
-          location: { type: "string" },
           startDate: { type: "string", format: "date-time" },
           endDate: { type: "string", format: "date-time" },
-          ageCategory: { type: "string" },
-          createdBy: { type: "string" }
+          category: { type: "string" },
+          winPoints: { type: "integer" },
+          status: { type: "string", enum: ["planned", "in_progress", "completed"] },
+          courts: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                _id: { type: "string" },
+                name: { type: "string" }
+              }
+            }
+          },
+          finalGroups: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                _id: { type: "string" },
+                themeName: { type: "string" },
+                level: { type: "integer" }
+              }
+            }
+          }
         }
       }
     }
