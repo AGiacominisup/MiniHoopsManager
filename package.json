@@ -1,6 +1,7 @@
 {
   "name": "minihoopsmanager",
   "version": "1.0.0",
+  "packageManager": "pnpm@11.16.0",
   "description": "Gestionale per tornei di basket",
   "main": "dist/server.js",
   "scripts": {

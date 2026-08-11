@@ -97,8 +97,12 @@ Spec OpenAPI JSON:
 
 Configura il servizio Web con:
 
-- Build Command: `npm install && npm run build`
-- Start Command: `npm start`
+- Build Command: `pnpm install --frozen-lockfile --prod=false && pnpm build`
+- Start Command: `pnpm start`
+
+Il file `render.yaml` contiene la stessa configurazione. L'opzione `--prod=false` è
+necessaria perché TypeScript e i pacchetti `@types` servono durante la build anche
+quando `NODE_ENV=production`.
 
 Environment variables su Render:
 
