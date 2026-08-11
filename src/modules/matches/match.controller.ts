@@ -4,7 +4,8 @@ import { idParamsSchema } from "../../utils/validation";
 import { RegistrationModel } from "../registrations/registration.model";
 import { TournamentModel } from "../tournaments/tournament.model";
 import { MatchModel } from "./match.model";
-import { createMatchSchema, matchQuerySchema, updateMatchSchema } from "./match.validation";
+import { completeMatchSchema, createMatchSchema, matchQuerySchema, updateMatchSchema } from "./match.validation";
+import { completeMatch, startMatch } from "./matchQueue.service";
 
 interface MatchReferenceTeam {
   players: Array<{ registrationId: unknown }>;
@@ -60,7 +61,8 @@ export const createMatch = async (req: Request, res: Response): Promise<void> =>
 
   const match = await MatchModel.create({
     ...body,
-    scheduledAt: new Date(body.scheduledAt)
+    scheduledAt: new Date(body.scheduledAt),
+    status: body.status ?? "scheduled"
   });
   res.status(201).json({ message: "Match created", match });
 };
@@ -90,6 +92,9 @@ export const updateMatch = async (req: Request, res: Response): Promise<void> =>
   if (!match) {
     throw new ApiError(404, "Match not found");
   }
+  if (match.generationSeed) {
+    throw new ApiError(409, "Generated match composition is immutable");
+  }
 
   const tournamentId = body.tournamentId ?? String(match.tournamentId);
   const courtId = body.courtId ?? String(match.courtId);
@@ -109,11 +114,28 @@ export const updateMatch = async (req: Request, res: Response): Promise<void> =>
 
 export const deleteMatch = async (req: Request, res: Response): Promise<void> => {
   const { id } = idParamsSchema.parse(req.params);
-  const match = await MatchModel.findByIdAndDelete(id);
+  const existingMatch = await MatchModel.findById(id);
 
-  if (!match) {
+  if (!existingMatch) {
     throw new ApiError(404, "Match not found");
   }
+  if (existingMatch.generationSeed) {
+    throw new ApiError(409, "Generated matches cannot be deleted individually");
+  }
+  await existingMatch.deleteOne();
 
   res.status(200).json({ message: "Match deleted" });
+};
+
+export const startQueuedMatch = async (req: Request, res: Response): Promise<void> => {
+  const { id } = idParamsSchema.parse(req.params);
+  const match = await startMatch(id);
+  res.status(200).json({ message: "Match started", match });
+};
+
+export const completeQueuedMatch = async (req: Request, res: Response): Promise<void> => {
+  const { id } = idParamsSchema.parse(req.params);
+  const { scoreA, scoreB } = completeMatchSchema.parse(req.body);
+  const result = await completeMatch(id, scoreA, scoreB);
+  res.status(200).json({ message: "Match completed", ...result });
 };

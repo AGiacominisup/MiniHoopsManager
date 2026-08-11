@@ -24,3 +24,7 @@ export const registrationQuerySchema = z.object({
   tournamentId: objectIdSchema.optional(),
   playerId: objectIdSchema.optional()
 });
+
+export const attendanceSchema = z.object({
+  attendanceStatus: z.enum(["checked_in", "withdrawn"])
+});

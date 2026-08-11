@@ -6,6 +6,7 @@ import {
   deleteRegistration,
   getRegistration,
   listRegistrations,
+  updateAttendance,
   updateRegistration
 } from "./registration.controller";
 
@@ -14,5 +15,6 @@ export const registrationRouter = Router();
 registrationRouter.get("/", requireAuth, asyncHandler(listRegistrations));
 registrationRouter.post("/", requireAuth, requireRole(["admin", "staff"]), asyncHandler(createRegistration));
 registrationRouter.get("/:id", requireAuth, asyncHandler(getRegistration));
+registrationRouter.patch("/:id/attendance", requireAuth, requireRole(["admin", "staff"]), asyncHandler(updateAttendance));
 registrationRouter.patch("/:id", requireAuth, requireRole(["admin", "staff"]), asyncHandler(updateRegistration));
 registrationRouter.delete("/:id", requireAuth, requireRole(["admin", "staff"]), asyncHandler(deleteRegistration));

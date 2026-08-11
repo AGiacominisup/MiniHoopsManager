@@ -22,7 +22,7 @@ const matchFields = {
   finalGroupId: objectIdSchema.nullable().optional(),
   phase: z.enum(["qualification", "final"]),
   scheduledAt: z.string().datetime(),
-  status: z.enum(["scheduled", "in_progress", "completed"]).optional(),
+  status: z.enum(["scheduled", "queued", "ready", "in_progress", "completed"]).optional(),
   scoreA: z.number().int().nonnegative().optional(),
   scoreB: z.number().int().nonnegative().optional(),
   teams: z
@@ -52,3 +52,12 @@ export const matchQuerySchema = z.object({
   phase: z.enum(["qualification", "final"]).optional(),
   status: z.enum(["scheduled", "in_progress", "completed"]).optional()
 });
+
+export const completeMatchSchema = z
+  .object({
+    scoreA: z.number().int().nonnegative(),
+    scoreB: z.number().int().nonnegative()
+  })
+  .refine((body) => body.scoreA !== body.scoreB, {
+    message: "Draws are not supported in the current tournament format"
+  });

@@ -1,7 +1,7 @@
 import { type HydratedDocument, Schema, model } from "mongoose";
 
 export type MatchPhase = "qualification" | "final";
-export type MatchStatus = "scheduled" | "in_progress" | "completed";
+export type MatchStatus = "scheduled" | "queued" | "ready" | "in_progress" | "completed";
 export type MatchSide = "A" | "B";
 
 export interface MatchPlayerSnapshot {
@@ -17,14 +17,20 @@ export interface MatchTeam {
 
 export interface MatchDocument {
   tournamentId: Schema.Types.ObjectId;
-  courtId: Schema.Types.ObjectId;
+  courtId: Schema.Types.ObjectId | null;
   finalGroupId: Schema.Types.ObjectId | null;
   phase: MatchPhase;
-  scheduledAt: Date;
+  scheduledAt?: Date;
   status: MatchStatus;
   scoreA: number;
   scoreB: number;
   teams: MatchTeam[];
+  queuePosition?: number;
+  generationSeed?: string;
+  rosterFingerprint?: string;
+  assignedAt?: Date;
+  startedAt?: Date;
+  completedAt?: Date;
 }
 
 const matchPlayerSnapshotSchema = new Schema<MatchPlayerSnapshot>(
@@ -65,14 +71,14 @@ const matchTeamSchema = new Schema<MatchTeam>(
 const matchSchema = new Schema<MatchDocument>(
   {
     tournamentId: { type: Schema.Types.ObjectId, ref: "Tournament", required: true },
-    courtId: { type: Schema.Types.ObjectId, required: true },
+    courtId: { type: Schema.Types.ObjectId, default: null },
     finalGroupId: { type: Schema.Types.ObjectId, default: null },
     phase: { type: String, enum: ["qualification", "final"], required: true },
-    scheduledAt: { type: Date, required: true },
+    scheduledAt: { type: Date },
     status: {
       type: String,
-      enum: ["scheduled", "in_progress", "completed"],
-      default: "scheduled"
+      enum: ["scheduled", "queued", "ready", "in_progress", "completed"],
+      default: "queued"
     },
     scoreA: { type: Number, default: 0, min: 0 },
     scoreB: { type: Number, default: 0, min: 0 },
@@ -84,7 +90,13 @@ const matchSchema = new Schema<MatchDocument>(
         },
         message: "A match must contain exactly two teams, A and B."
       }
-    }
+    },
+    queuePosition: { type: Number, min: 0 },
+    generationSeed: { type: String },
+    rosterFingerprint: { type: String },
+    assignedAt: { type: Date },
+    startedAt: { type: Date },
+    completedAt: { type: Date }
   },
   {
     timestamps: true
@@ -94,5 +106,19 @@ const matchSchema = new Schema<MatchDocument>(
 matchSchema.index({ tournamentId: 1 });
 matchSchema.index({ tournamentId: 1, phase: 1 });
 matchSchema.index({ tournamentId: 1, finalGroupId: 1 });
+matchSchema.index(
+  { tournamentId: 1, phase: 1, queuePosition: 1 },
+  { unique: true, partialFilterExpression: { queuePosition: { $type: "number" } } }
+);
+matchSchema.index(
+  { tournamentId: 1, courtId: 1 },
+  {
+    unique: true,
+    partialFilterExpression: {
+      courtId: { $type: "objectId" },
+      status: { $in: ["ready", "in_progress"] }
+    }
+  }
+);
 
 export const MatchModel = model<MatchDocument>("Match", matchSchema);

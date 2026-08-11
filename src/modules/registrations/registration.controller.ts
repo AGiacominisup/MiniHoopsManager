@@ -6,6 +6,7 @@ import { PlayerModel } from "../players/player.model";
 import { TournamentModel } from "../tournaments/tournament.model";
 import { RegistrationModel } from "./registration.model";
 import {
+  attendanceSchema,
   createRegistrationSchema,
   registrationQuerySchema,
   updateRegistrationSchema
@@ -23,6 +24,9 @@ const validateRegistrationReferences = async (
 
   if (!tournament) {
     throw new ApiError(400, "Referenced tournament not found");
+  }
+  if (tournament.qualification.status !== "draft") {
+    throw new ApiError(409, "Roster is locked after qualification generation");
   }
   if (!player) {
     throw new ApiError(400, "Referenced player not found");
@@ -104,16 +108,42 @@ export const updateRegistration = async (req: Request, res: Response): Promise<v
 
 export const deleteRegistration = async (req: Request, res: Response): Promise<void> => {
   const { id } = idParamsSchema.parse(req.params);
+  const existingRegistration = await RegistrationModel.findById(id);
+  if (!existingRegistration) {
+    throw new ApiError(404, "Registration not found");
+  }
+  const tournament = await TournamentModel.findById(existingRegistration.tournamentId);
+  if (tournament?.qualification.status !== "draft") {
+    throw new ApiError(409, "Roster is locked after qualification generation");
+  }
   const hasMatches = await MatchModel.exists({ "teams.players.registrationId": id });
   if (hasMatches) {
     throw new ApiError(409, "Registration cannot be deleted while matches reference it");
   }
 
-  const registration = await RegistrationModel.findByIdAndDelete(id);
+  await existingRegistration.deleteOne();
 
+  res.status(200).json({ message: "Registration deleted" });
+};
+
+export const updateAttendance = async (req: Request, res: Response): Promise<void> => {
+  const { id } = idParamsSchema.parse(req.params);
+  const { attendanceStatus } = attendanceSchema.parse(req.body);
+  const registration = await RegistrationModel.findById(id);
   if (!registration) {
     throw new ApiError(404, "Registration not found");
   }
 
-  res.status(200).json({ message: "Registration deleted" });
+  const tournament = await TournamentModel.findById(registration.tournamentId);
+  if (!tournament) {
+    throw new ApiError(404, "Tournament not found");
+  }
+  if (tournament.qualification.status !== "draft") {
+    throw new ApiError(409, "Roster is locked after qualification generation");
+  }
+
+  registration.attendanceStatus = attendanceStatus;
+  registration.checkedInAt = attendanceStatus === "checked_in" ? new Date() : null;
+  await registration.save();
+  res.status(200).json({ message: "Attendance updated", registration });
 };

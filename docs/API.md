@@ -113,6 +113,23 @@ Common status codes:
 
 ## Tournaments
 
+### Tournament creation flow
+
+The first supported format is always individual rotating-teams `3v3`. Teams are temporary match
+snapshots, not persistent entities. A tournament is prepared and started with this flow:
+
+1. Create a draft tournament with courts and `qualificationAppearancesPerPlayer`.
+2. Associate existing players with `POST /tournaments/:id/registrations/bulk`.
+3. Check players in with `PATCH /registrations/:id/attendance`.
+4. Read blockers with `GET /tournaments/:id/setup`.
+5. Preview deterministic matches with `POST /tournaments/:id/qualification/preview`.
+6. Confirm the returned seed and fingerprint with `POST /tournaments/:id/qualification/generate`.
+7. Reserve a queued match on a court, start it, then complete it. Completion reserves the next
+  compatible match on the same court but does not start it.
+
+Once matches are generated, roster, courts and tournament configuration are locked. The plan can
+be cancelled only before any match is assigned to a court.
+
 ```ts
 export type TournamentStatus = "planned" | "in_progress" | "completed";
 
@@ -124,6 +141,21 @@ export interface Tournament {
   category?: string;
   winPoints: number;
   status: TournamentStatus;
+  configuration: {
+    gameFormat: "3v3";
+    competitionFormat: "individual_rotating_teams";
+    teamSize: 3;
+    playersPerMatch: 6;
+    qualificationAppearancesPerPlayer: number;
+    queueMode: "dynamic";
+  };
+  qualification: {
+    status: "draft" | "generated" | "in_progress" | "completed";
+    seed?: string;
+    rosterFingerprint?: string;
+    generatedAt?: string;
+    totalMatches: number;
+  };
   courts: Array<{ _id: string; name: string }>;
   finalGroups: Array<{ _id: string; themeName: string; level: number }>;
   createdAt: string;
@@ -209,6 +241,8 @@ export interface Registration {
   pointsScored: number;
   pointsAllowed: number;
   finalGroupId: string | null;
+  attendanceStatus: "registered" | "checked_in" | "withdrawn";
+  checkedInAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -240,9 +274,13 @@ registration.
 
 ## Matches
 
+Generated qualification matches have no scheduled time. They move through
+`queued -> ready -> in_progress -> completed`; `ready` means reserved on a court and waiting for an
+explicit Start command.
+
 ```ts
 export type MatchPhase = "qualification" | "final";
-export type MatchStatus = "scheduled" | "in_progress" | "completed";
+export type MatchStatus = "scheduled" | "queued" | "ready" | "in_progress" | "completed";
 
 export interface MatchPlayer {
   registrationId: string;

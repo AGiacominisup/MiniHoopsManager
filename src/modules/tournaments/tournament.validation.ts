@@ -10,7 +10,9 @@ const tournamentFields = {
   courts: z
     .array(
       z.object({
-        name: z.string().trim().min(1)
+        name: z.string().trim().min(1),
+        enabled: z.boolean().optional(),
+        displayOrder: z.number().int().nonnegative().optional()
       })
     )
     .optional(),
@@ -21,8 +23,31 @@ const tournamentFields = {
         level: z.number().int().min(1)
       })
     )
+    .optional(),
+  configuration: z
+    .object({
+      gameFormat: z.literal("3v3").optional(),
+      competitionFormat: z.literal("individual_rotating_teams").optional(),
+      teamSize: z.literal(3).optional(),
+      playersPerMatch: z.literal(6).optional(),
+      qualificationAppearancesPerPlayer: z.number().int().min(1).max(20),
+      queueMode: z.literal("dynamic").optional()
+    })
     .optional()
 };
+
+export const qualificationPreviewSchema = z.object({
+  seed: z.string().trim().min(1).max(100).optional()
+});
+
+export const qualificationGenerateSchema = z.object({
+  seed: z.string().trim().min(1).max(100),
+  rosterFingerprint: z.string().regex(/^[a-f0-9]{64}$/, "Invalid SHA-256 fingerprint")
+});
+
+export const bulkTournamentRegistrationsSchema = z.object({
+  playerIds: z.array(z.string()).min(1)
+});
 
 export const createTournamentSchema = z
   .object(tournamentFields)

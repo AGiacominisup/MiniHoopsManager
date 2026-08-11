@@ -8,3 +8,8 @@ export const objectIdSchema = z.string().refine((value) => Types.ObjectId.isVali
 export const idParamsSchema = z.object({
   id: objectIdSchema
 });
+
+export const tournamentCourtParamsSchema = z.object({
+  id: objectIdSchema,
+  courtId: objectIdSchema
+});

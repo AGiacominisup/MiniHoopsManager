@@ -103,6 +103,27 @@ export const openApiSpec = {
           category: { type: "string" },
           winPoints: { type: "integer" },
           status: { type: "string", enum: ["planned", "in_progress", "completed"] },
+          configuration: {
+            type: "object",
+            properties: {
+              gameFormat: { type: "string", enum: ["3v3"] },
+              competitionFormat: { type: "string", enum: ["individual_rotating_teams"] },
+              teamSize: { type: "integer", enum: [3] },
+              playersPerMatch: { type: "integer", enum: [6] },
+              qualificationAppearancesPerPlayer: { type: "integer", minimum: 1 },
+              queueMode: { type: "string", enum: ["dynamic"] }
+            }
+          },
+          qualification: {
+            type: "object",
+            properties: {
+              status: { type: "string", enum: ["draft", "generated", "in_progress", "completed"] },
+              seed: { type: "string" },
+              rosterFingerprint: { type: "string" },
+              generatedAt: { type: "string", format: "date-time" },
+              totalMatches: { type: "integer" }
+            }
+          },
           courts: {
             type: "array",
             items: {
@@ -150,6 +171,8 @@ export const openApiSpec = {
           pointsScored: { type: "integer", minimum: 0 },
           pointsAllowed: { type: "integer", minimum: 0 },
           finalGroupId: { type: "string", nullable: true }
+          ,attendanceStatus: { type: "string", enum: ["registered", "checked_in", "withdrawn"] },
+          checkedInAt: { type: "string", format: "date-time", nullable: true }
         }
       },
       Match: {
@@ -162,7 +185,8 @@ export const openApiSpec = {
           finalGroupId: { type: "string", nullable: true },
           phase: { type: "string", enum: ["qualification", "final"] },
           scheduledAt: { type: "string", format: "date-time" },
-          status: { type: "string", enum: ["scheduled", "in_progress", "completed"] },
+          status: { type: "string", enum: ["scheduled", "queued", "ready", "in_progress", "completed"] },
+          queuePosition: { type: "integer", minimum: 0 },
           scoreA: { type: "integer", minimum: 0 },
           scoreB: { type: "integer", minimum: 0 },
           teams: {
@@ -355,6 +379,54 @@ export const openApiSpec = {
         responses: { "200": { description: "Tournament deleted" }, "409": { description: "Related resources exist" } }
       }
     },
+    "/api/tournaments/{id}/setup": {
+      get: {
+        tags: ["Tournaments"], summary: "Get tournament setup readiness", security: [{ bearerAuth: [] }],
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+        responses: { "200": { description: "Tournament setup, attendance counts and blockers" } }
+      }
+    },
+    "/api/tournaments/{id}/registrations/bulk": {
+      post: {
+        tags: ["Registrations"], summary: "Associate multiple players with a draft tournament", security: [{ bearerAuth: [] }],
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+        requestBody: { required: true, content: { "application/json": { schema: { type: "object", required: ["playerIds"], properties: { playerIds: { type: "array", items: { type: "string" } } } } } } },
+        responses: { "201": { description: "Existing and created registrations" }, "409": { description: "Roster locked" } }
+      }
+    },
+    "/api/tournaments/{id}/qualification/preview": {
+      post: {
+        tags: ["Tournaments"], summary: "Preview deterministic 3vs3 qualification matches", security: [{ bearerAuth: [] }],
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+        requestBody: { content: { "application/json": { schema: { type: "object", properties: { seed: { type: "string" } } } } } },
+        responses: { "200": { description: "Qualification plan, metrics, seed and roster fingerprint" }, "409": { description: "Setup not ready" } }
+      }
+    },
+    "/api/tournaments/{id}/qualification/generate": {
+      post: {
+        tags: ["Tournaments"], summary: "Persist a previewed qualification plan", security: [{ bearerAuth: [] }],
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+        requestBody: { required: true, content: { "application/json": { schema: { type: "object", required: ["seed", "rosterFingerprint"], properties: { seed: { type: "string" }, rosterFingerprint: { type: "string", minLength: 64, maxLength: 64 } } } } } },
+        responses: { "201": { description: "Qualification matches generated" }, "200": { description: "Idempotent replay" }, "409": { description: "Stale preview or existing plan" } }
+      }
+    },
+    "/api/tournaments/{id}/qualification": {
+      delete: {
+        tags: ["Tournaments"], summary: "Cancel an unstarted qualification plan", security: [{ bearerAuth: [] }],
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+        responses: { "200": { description: "Generation cancelled" }, "409": { description: "A match was already assigned" } }
+      }
+    },
+    "/api/tournaments/{id}/courts/{courtId}/assign-next": {
+      post: {
+        tags: ["Matches"], summary: "Reserve the next compatible match on a free court", security: [{ bearerAuth: [] }],
+        parameters: [
+          { name: "id", in: "path", required: true, schema: { type: "string" } },
+          { name: "courtId", in: "path", required: true, schema: { type: "string" } }
+        ],
+        responses: { "200": { description: "Ready match or null when none is compatible" }, "409": { description: "Court occupied or queue changed" } }
+      }
+    },
     "/api/players": {
       get: {
         tags: ["Players"], summary: "List players", security: [{ bearerAuth: [] }],
@@ -413,6 +485,14 @@ export const openApiSpec = {
         responses: { "200": { description: "Registration deleted" }, "409": { description: "Referenced by matches" } }
       }
     },
+    "/api/registrations/{id}/attendance": {
+      patch: {
+        tags: ["Registrations"], summary: "Check in or withdraw a player", security: [{ bearerAuth: [] }],
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+        requestBody: { required: true, content: { "application/json": { schema: { type: "object", required: ["attendanceStatus"], properties: { attendanceStatus: { type: "string", enum: ["checked_in", "withdrawn"] } } } } } },
+        responses: { "200": { description: "Attendance updated" }, "409": { description: "Roster locked" } }
+      }
+    },
     "/api/matches": {
       get: {
         tags: ["Matches"], summary: "List matches", security: [{ bearerAuth: [] }],
@@ -443,6 +523,21 @@ export const openApiSpec = {
       delete: {
         tags: ["Matches"], summary: "Delete a match", security: [{ bearerAuth: [] }],
         responses: { "200": { description: "Match deleted" }, "404": { description: "Not found" } }
+      }
+    },
+    "/api/matches/{id}/start": {
+      post: {
+        tags: ["Matches"], summary: "Start a ready match", security: [{ bearerAuth: [] }],
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+        responses: { "200": { description: "Match started" }, "409": { description: "Match is not ready" } }
+      }
+    },
+    "/api/matches/{id}/complete": {
+      post: {
+        tags: ["Matches"], summary: "Complete a match and reserve the next one", security: [{ bearerAuth: [] }],
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+        requestBody: { required: true, content: { "application/json": { schema: { type: "object", required: ["scoreA", "scoreB"], properties: { scoreA: { type: "integer", minimum: 0 }, scoreB: { type: "integer", minimum: 0 } } } } } },
+        responses: { "200": { description: "Completed match, next ready match and idempotency flag" }, "409": { description: "Invalid transition or changed result" } }
       }
     },
     "/api/users": {

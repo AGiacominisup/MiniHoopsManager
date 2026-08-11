@@ -1,6 +1,8 @@
 import { type HydratedDocument, Schema, model } from "mongoose";
 import { PlayerModel } from "../players/player.model";
 
+export type AttendanceStatus = "registered" | "checked_in" | "withdrawn";
+
 export interface RegistrationDocument {
   tournamentId: Schema.Types.ObjectId;
   playerId: Schema.Types.ObjectId;
@@ -11,6 +13,8 @@ export interface RegistrationDocument {
   pointsScored: number;
   pointsAllowed: number;
   finalGroupId: Schema.Types.ObjectId | null;
+  attendanceStatus: AttendanceStatus;
+  checkedInAt: Date | null;
 }
 
 const registrationSchema = new Schema<RegistrationDocument>(
@@ -23,7 +27,14 @@ const registrationSchema = new Schema<RegistrationDocument>(
     wins: { type: Number, default: 0 },
     pointsScored: { type: Number, default: 0 },
     pointsAllowed: { type: Number, default: 0 },
-    finalGroupId: { type: Schema.Types.ObjectId, default: null }
+    finalGroupId: { type: Schema.Types.ObjectId, default: null },
+    attendanceStatus: {
+      type: String,
+      enum: ["registered", "checked_in", "withdrawn"],
+      default: "registered",
+      required: true
+    },
+    checkedInAt: { type: Date, default: null }
   },
   {
     timestamps: true
@@ -31,6 +42,7 @@ const registrationSchema = new Schema<RegistrationDocument>(
 );
 
 registrationSchema.index({ tournamentId: 1, playerId: 1 }, { unique: true });
+registrationSchema.index({ tournamentId: 1, attendanceStatus: 1, checkedInAt: 1 });
 
 registrationSchema.pre("validate", async function (this: HydratedDocument<RegistrationDocument>) {
   if (this.jerseyNumber !== undefined && this.jerseyNumber !== null) {
