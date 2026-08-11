@@ -184,6 +184,7 @@ export interface Player {
   _id: string;
   firstName?: string;
   lastName?: string;
+  jerseyNumber?: number;
   birthDate?: string;
   guardianContact?: string;
   createdAt: string;
@@ -205,6 +206,7 @@ Create or update payload example:
 {
   "firstName": "Mario",
   "lastName": "Rossi",
+  "jerseyNumber": 12,
   "birthDate": "2015-05-20T00:00:00.000Z",
   "guardianContact": "+39 333 0000000"
 }

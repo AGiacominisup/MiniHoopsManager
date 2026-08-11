@@ -3,6 +3,7 @@ import { z } from "zod";
 const playerFields = {
   firstName: z.string().trim().min(1).optional(),
   lastName: z.string().trim().min(1).optional(),
+  jerseyNumber: z.number().int().nonnegative().optional(),
   birthDate: z.string().datetime().optional(),
   guardianContact: z.string().trim().min(1).optional()
 };

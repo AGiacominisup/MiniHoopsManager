@@ -145,6 +145,7 @@ export const openApiSpec = {
           _id: { type: "string" },
           firstName: { type: "string" },
           lastName: { type: "string" },
+          jerseyNumber: { type: "integer", minimum: 0 },
           birthDate: { type: "string", format: "date-time" },
           guardianContact: { type: "string" }
         }
