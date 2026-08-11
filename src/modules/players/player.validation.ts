@@ -1,0 +1,18 @@
+import { z } from "zod";
+
+const playerFields = {
+  firstName: z.string().trim().min(1).optional(),
+  lastName: z.string().trim().min(1).optional(),
+  birthDate: z.string().datetime().optional(),
+  guardianContact: z.string().trim().min(1).optional()
+};
+
+export const createPlayerSchema = z.object(playerFields).refine(
+  (data) => Object.values(data).some((value) => value !== undefined),
+  { message: "At least one field is required" }
+);
+
+export const updatePlayerSchema = z.object(playerFields).refine(
+  (data) => Object.values(data).some((value) => value !== undefined),
+  { message: "At least one field is required" }
+);

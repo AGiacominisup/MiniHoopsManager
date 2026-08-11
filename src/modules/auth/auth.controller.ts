@@ -27,7 +27,7 @@ export const register = async (req: Request, res: Response): Promise<void> => {
   const user = await UserModel.create({
     email: body.email.toLowerCase(),
     passwordHash,
-    role: body.role ?? "staff"
+    role: "staff"
   });
 
   const token = signToken(String(user._id), user.role);

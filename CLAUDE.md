@@ -1,4 +1,4 @@
-# MiniHoopsManager Copilot Instructions
+# MiniHoopsManager Claude Instructions
 
 ## Project Context
 

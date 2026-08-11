@@ -14,30 +14,42 @@ Questo repository contiene ora uno scheletro backend pronto per Render con:
 
 ## Requisiti
 
-- Node.js 20+
-- MongoDB (locale o MongoDB Atlas)
+- Node.js 24+
+- MongoDB (Docker locale o MongoDB Atlas)
 
 ## Setup locale
 
-1. Installa dipendenze:
+1. Seleziona la versione Node.js del progetto:
 
 ```bash
-npm install
+nvm use
 ```
 
-2. Crea il file `.env` partendo da `.env.example`.
-
-3. Avvia in sviluppo:
+2. Installa dipendenze:
 
 ```bash
-npm run dev
+pnpm install
 ```
 
-4. Build produzione:
+3. Crea il file `.env` partendo da `.env.example`.
+
+4. Avvia MongoDB locale:
 
 ```bash
-npm run build
-npm start
+docker compose up -d --wait mongodb
+```
+
+5. Avvia in sviluppo:
+
+```bash
+pnpm dev
+```
+
+6. Build e avvio produzione:
+
+```bash
+pnpm build
+pnpm start
 ```
 
 ## Variabili ambiente
@@ -57,8 +69,19 @@ Base path: `/api`
 - `GET /api/health`
 - `POST /api/auth/register`
 - `POST /api/auth/login`
-- `GET /api/tournaments` (richiede Bearer token)
-- `POST /api/tournaments` (richiede Bearer token + ruolo `admin` o `staff`)
+- `GET|POST /api/tournaments`
+- `GET|PATCH|DELETE /api/tournaments/:id`
+- `GET|POST /api/players`
+- `GET|PATCH|DELETE /api/players/:id`
+- `GET|POST /api/registrations`
+- `GET|PATCH|DELETE /api/registrations/:id`
+- `GET|POST /api/matches`
+- `GET|PATCH|DELETE /api/matches/:id`
+- `GET|POST /api/users` (solo ruolo `admin`)
+- `GET|PATCH|DELETE /api/users/:id` (solo ruolo `admin`)
+
+Tutte le route CRUD richiedono un Bearer token. Le operazioni di scrittura su tornei,
+giocatori, iscrizioni e partite richiedono il ruolo `admin` o `staff`.
 
 ## Swagger
 

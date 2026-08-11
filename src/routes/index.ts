@@ -1,6 +1,10 @@
 import { Router } from "express";
 import { authRouter } from "../modules/auth/auth.routes";
+import { matchRouter } from "../modules/matches/match.routes";
+import { playerRouter } from "../modules/players/player.routes";
+import { registrationRouter } from "../modules/registrations/registration.routes";
 import { tournamentRouter } from "../modules/tournaments/tournament.routes";
+import { userRouter } from "../modules/users/user.routes";
 
 export const apiRouter = Router();
 
@@ -10,3 +14,7 @@ apiRouter.get("/health", (_req, res) => {
 
 apiRouter.use("/auth", authRouter);
 apiRouter.use("/tournaments", tournamentRouter);
+apiRouter.use("/players", playerRouter);
+apiRouter.use("/registrations", registrationRouter);
+apiRouter.use("/matches", matchRouter);
+apiRouter.use("/users", userRouter);
