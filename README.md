@@ -67,7 +67,6 @@ Vedi `.env.example`:
 Base path: `/api`
 
 - `GET /api/health`
-- `POST /api/auth/register`
 - `POST /api/auth/login`
 - `GET|POST /api/tournaments`
 - `GET|PATCH|DELETE /api/tournaments/:id`
@@ -80,7 +79,8 @@ Base path: `/api`
 - `GET|POST /api/users` (solo ruolo `admin`)
 - `GET|PATCH|DELETE /api/users/:id` (solo ruolo `admin`)
 
-Tutte le route CRUD richiedono un Bearer token. Le operazioni di scrittura su tornei,
+Gli account sono creati esclusivamente dagli amministratori. Tutte le route CRUD richiedono un
+Bearer token. Le operazioni di scrittura su tornei,
 giocatori, iscrizioni e partite richiedono il ruolo `admin` o `staff`.
 
 ## Swagger

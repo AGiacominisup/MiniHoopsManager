@@ -29,14 +29,6 @@ export const openApiSpec = {
       }
     },
     schemas: {
-      RegisterRequest: {
-        type: "object",
-        required: ["email", "password"],
-        properties: {
-          email: { type: "string", format: "email", example: "admin@minihoops.com" },
-          password: { type: "string", minLength: 8, example: "superPassword123" }
-        }
-      },
       LoginRequest: {
         type: "object",
         required: ["email", "password"],
@@ -252,30 +244,6 @@ export const openApiSpec = {
                     service: { type: "string", example: "MiniHoopsManager API" }
                   }
                 }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/auth/register": {
-      post: {
-        tags: ["Auth"],
-        summary: "Register a new user",
-        requestBody: {
-          required: true,
-          content: {
-            "application/json": {
-              schema: { $ref: "#/components/schemas/RegisterRequest" }
-            }
-          }
-        },
-        responses: {
-          "201": {
-            description: "User registered",
-            content: {
-              "application/json": {
-                schema: { $ref: "#/components/schemas/AuthResponse" }
               }
             }
           }

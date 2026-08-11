@@ -22,15 +22,15 @@ OpenAPI document at `https://minihoopsmanager.onrender.com/docs/openapi.json`.
 
 ## Authentication
 
-`POST /auth/register` and `POST /auth/login` are public. Every CRUD endpoint requires a JWT:
+`POST /auth/login` is public. Account creation is restricted to authenticated administrators
+through the Users API. Every CRUD endpoint requires a JWT:
 
 ```http
 Authorization: Bearer <token>
 Content-Type: application/json
 ```
 
-Public registration always creates a `staff` user. User administration endpoints require the
-`admin` role.
+User administration endpoints require the `admin` role.
 
 ```ts
 export type UserRole = "admin" | "coach" | "staff";
@@ -45,21 +45,6 @@ export interface AuthResponse {
   };
 }
 ```
-
-### Register
-
-```http
-POST /auth/register
-```
-
-```json
-{
-  "email": "user@example.com",
-  "password": "password123"
-}
-```
-
-Returns `201 AuthResponse`. Duplicate email returns `409`.
 
 ### Login
 
