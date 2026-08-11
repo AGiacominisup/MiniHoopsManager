@@ -93,6 +93,10 @@ Spec OpenAPI JSON:
 
 - `GET /docs/openapi.json`
 
+Guida di integrazione frontend con payload e tipi TypeScript:
+
+- [`docs/API.md`](docs/API.md)
+
 ## Deploy su Render
 
 Configura il servizio Web con:
