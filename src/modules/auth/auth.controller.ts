@@ -1,18 +1,16 @@
 import type { Request, Response } from "express";
 import bcrypt from "bcryptjs";
-import jwt, { type Secret, type SignOptions } from "jsonwebtoken";
-import { env } from "../../config/env";
+import jwt from "jsonwebtoken";
+import { jwtConfig } from "../../config/jwt";
 import { ApiError } from "../../utils/ApiError";
 import { UserModel } from "../users/user.model";
 import { loginSchema } from "./auth.validation";
 
 const signToken = (userId: string, role: string): string => {
-  const secret: Secret = env.JWT_SECRET;
-  const options: SignOptions = {
-    expiresIn: env.JWT_EXPIRES_IN as SignOptions["expiresIn"]
-  };
-
-  return jwt.sign({ userId, role }, secret, options);
+  return jwt.sign({ userId, role }, jwtConfig.secret, {
+    algorithm: jwtConfig.algorithm,
+    expiresIn: jwtConfig.expiresIn
+  });
 };
 
 export const login = async (req: Request, res: Response): Promise<void> => {
@@ -34,7 +32,7 @@ export const login = async (req: Request, res: Response): Promise<void> => {
     message: "Login successful",
     token,
     user: {
-      id: user._id,
+      id: String(user._id),
       email: user.email,
       role: user.role
     }
