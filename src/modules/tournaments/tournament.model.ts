@@ -1,7 +1,19 @@
 import { Schema, model } from "mongoose";
 
-export type TournamentStatus = "planned" | "in_progress" | "completed";
-export type QualificationStatus = "draft" | "generated" | "in_progress" | "completed";
+/**
+ * The tournament lifecycle, as a single linear progression:
+ *
+ *   draft         created; players are being associated, nothing generated yet
+ *   qualification the schedule exists and qualification is being played
+ *   finals        qualification is over and the final games are being played
+ *   completed     everything is played; the tournament is read-only
+ *
+ * Transitions are driven by the engine, never set directly by a client.
+ * `finals` is not reachable yet: the finals generator does not exist, so the
+ * last completed qualification game currently moves the tournament straight to
+ * `completed`.
+ */
+export type TournamentStatus = "draft" | "qualification" | "finals" | "completed";
 
 export interface Court {
   name: string;
@@ -24,7 +36,6 @@ export interface TournamentConfiguration {
 }
 
 export interface QualificationConfiguration {
-  status: QualificationStatus;
   seed?: string;
   rosterFingerprint?: string;
   generatedAt?: Date;
@@ -90,12 +101,6 @@ const tournamentConfigurationSchema = new Schema<TournamentConfiguration>(
 
 const qualificationConfigurationSchema = new Schema<QualificationConfiguration>(
   {
-    status: {
-      type: String,
-      enum: ["draft", "generated", "in_progress", "completed"],
-      default: "draft",
-      required: true
-    },
     seed: { type: String },
     rosterFingerprint: { type: String },
     generatedAt: { type: Date },
@@ -113,8 +118,8 @@ const tournamentSchema = new Schema<TournamentDocument>(
     winPoints: { type: Number, default: 10, min: 1 },
     status: {
       type: String,
-      enum: ["planned", "in_progress", "completed"],
-      default: "planned"
+      enum: ["draft", "qualification", "finals", "completed"],
+      default: "draft"
     },
     courts: { type: [courtSchema], default: [] },
     finalGroups: { type: [finalGroupSchema], default: [] },

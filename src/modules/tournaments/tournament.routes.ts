@@ -15,6 +15,7 @@ import {
 	listAvailablePlayers,
 	listTournaments,
 	previewTournamentQualification,
+	startTournamentQualification,
 	updateTournament
 } from "./tournament.controller";
 
@@ -27,6 +28,7 @@ tournamentRouter.get("/:id/available-players", requireAuth, asyncHandler(listAva
 tournamentRouter.post("/:id/registrations/bulk", requireAuth, requireRole(["admin", "staff"]), asyncHandler(bulkRegisterPlayers));
 tournamentRouter.delete("/:id/registrations/bulk", requireAuth, requireRole(["admin", "staff"]), asyncHandler(bulkUnregisterPlayers));
 tournamentRouter.patch("/:id/registrations/attendance", requireAuth, requireRole(["admin", "staff"]), asyncHandler(bulkUpdateAttendance));
+tournamentRouter.post("/:id/start", requireAuth, requireRole(["admin", "staff"]), asyncHandler(startTournamentQualification));
 tournamentRouter.post("/:id/qualification/preview", requireAuth, requireRole(["admin", "staff"]), asyncHandler(previewTournamentQualification));
 tournamentRouter.post("/:id/qualification/generate", requireAuth, requireRole(["admin", "staff"]), asyncHandler(generateTournamentQualification));
 tournamentRouter.delete("/:id/qualification", requireAuth, requireRole(["admin", "staff"]), asyncHandler(cancelTournamentQualification));

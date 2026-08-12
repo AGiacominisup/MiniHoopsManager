@@ -13,13 +13,15 @@ import {
   createTournamentSchema,
   qualificationGenerateSchema,
   qualificationPreviewSchema,
+  tournamentStartSchema,
   updateTournamentSchema
 } from "./tournament.validation";
 import {
   cancelQualification,
   evaluateQualificationReadiness,
   generateQualification,
-  previewQualification
+  previewQualification,
+  startTournament
 } from "./qualification.service";
 
 export const createTournament = async (req: Request, res: Response): Promise<void> => {
@@ -31,7 +33,6 @@ export const createTournament = async (req: Request, res: Response): Promise<voi
     ...(body.endDate && { endDate: new Date(body.endDate) }),
     category: body.category,
     winPoints: body.winPoints,
-    status: body.status,
     courts: body.courts ?? [],
     finalGroups: body.finalGroups ?? [],
     ...(body.configuration && { configuration: body.configuration })
@@ -57,8 +58,8 @@ export const updateTournament = async (req: Request, res: Response): Promise<voi
   const body = updateTournamentSchema.parse(req.body);
   const tournament = await loadTournament(id);
 
-  if (tournament.qualification.status !== "draft" && (body.configuration || body.courts)) {
-    throw new ApiError(409, "Tournament configuration and courts are locked after generation");
+  if (tournament.status !== "draft" && (body.configuration || body.courts)) {
+    throw new ApiError(409, "Tournament configuration and courts are locked once it has started");
   }
 
   const startDate = body.startDate ? new Date(body.startDate) : tournament.startDate;
@@ -216,6 +217,13 @@ export const bulkUpdateAttendance = async (req: Request, res: Response): Promise
   );
 
   res.status(200).json({ message: "Attendance updated", summary: { modified: modifiedCount } });
+};
+
+export const startTournamentQualification = async (req: Request, res: Response): Promise<void> => {
+  const { id } = idParamsSchema.parse(req.params);
+  const { seed } = tournamentStartSchema.parse(req.body ?? {});
+  const result = await startTournament(id, seed);
+  res.status(result.idempotent ? 200 : 201).json({ message: "Tournament started", ...result });
 };
 
 export const previewTournamentQualification = async (req: Request, res: Response): Promise<void> => {

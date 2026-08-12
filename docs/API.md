@@ -98,35 +98,76 @@ Common status codes:
 
 ## Tournaments
 
+### Lifecycle
+
+`Tournament.status` is the single source of truth for where a tournament is, and it only moves
+forward:
+
+```text
+draft ──start──> qualification ──last qualification match──> completed
+                        │
+                        └── (future) ──> finals ──> completed
+```
+
+`status` is **engine-managed**: it is not accepted on `POST /tournaments` or `PATCH
+/tournaments/:id`. It changes only through `POST /tournaments/:id/start`, match completion, and
+`DELETE /tournaments/:id/qualification`, which sends it back to `draft`.
+
+`finals` is declared but not yet reachable — the finals generator does not exist, so completing the
+last qualification match currently moves the tournament straight to `completed`.
+
+Anything other than `draft` means the roster, courts and configuration are locked.
+
 ### Tournament creation flow
 
 The first supported format is always individual rotating-teams `3v3`. Teams are temporary match
 snapshots, not persistent entities. A tournament is prepared and started with this flow:
 
-1. Create a draft tournament with courts and `qualificationAppearancesPerPlayer`. Dates are optional.
-2. Pick from `GET /tournaments/:id/available-players`, then associate them with
-  `POST /tournaments/:id/registrations/bulk`. Removal uses the same path with `DELETE`.
-3. Check everyone in with `PATCH /tournaments/:id/registrations/attendance` (omit `registrationIds`
-  to apply the status to the whole roster), or one player at a time with
-  `PATCH /registrations/:id/attendance`.
-4. Read blockers with `GET /tournaments/:id/setup`.
-5. Preview deterministic matches with `POST /tournaments/:id/qualification/preview`.
-6. Confirm the returned seed and fingerprint with `POST /tournaments/:id/qualification/generate`.
-7. Reserve a queued match on a court, start it, then complete it. Completion reserves the next
+1. Create the tournament with its courts and `qualificationAppearancesPerPlayer`. Dates are optional.
+2. Build the roster. `GET /tournaments/:id/available-players` returns everyone not yet registered;
+  `POST /tournaments/:id/registrations/bulk` associates a selection, `DELETE` on the same path
+  removes one. To add a player who does not exist yet, `POST /players` first and then associate the
+  returned `_id`. This step can be repeated as players arrive: the roster stays open for as long as
+  `status` is `draft`, and re-sending the whole list is safe — the response reports
+  `summary: { created, alreadyRegistered }`.
+3. Optionally read `GET /tournaments/:id/setup` for the current counts and blockers.
+4. Start the tournament with `POST /tournaments/:id/start`. This is the single "start" action: it
+  freezes the roster, generates the match queue and moves the tournament to `qualification`.
+5. Reserve a queued match on a court, start it, then complete it. Completion reserves the next
   compatible match on the same court but does not start it.
 
-Generation requires at least `playersPerMatch` checked-in players **and** at least one enabled
-court; `GET /tournaments/:id/setup` reports exactly the blockers the generator enforces.
+Starting requires at least `playersPerMatch` associated players **and** at least one enabled court.
 
-Only checked-in players enter the plan. Matches are generated as an ordered queue with
-`courtId: null` and are bound to a court at run time, so there is no fixed round structure.
+Every player still associated is treated as present: `POST /start` marks each non-withdrawn
+registration as `checked_in` itself, so no separate check-in step is required. Mark absentees
+`withdrawn` beforehand — with `PATCH /tournaments/:id/registrations/attendance` for several at once,
+or `PATCH /registrations/:id/attendance` for one — and they are left out of the schedule.
 
-Once matches are generated, roster, courts and tournament configuration are locked. The plan can
-be cancelled only before any match is assigned to a court; cancelling removes every qualification
-match of the tournament.
+Matches are generated as an ordered queue with `courtId: null` and are bound to a court at run
+time, so there is no fixed round structure.
+
+### Generating with review
+
+`POST /tournaments/:id/start` is a shortcut over a two-step handshake that remains available when
+the schedule should be inspected before it is committed:
+
+1. `POST /tournaments/:id/qualification/preview` returns a plan, its metrics, a `seed` and a
+  `rosterFingerprint`, and persists nothing. Call it again for a different draw.
+2. `POST /tournaments/:id/qualification/generate` commits the reviewed plan by sending that `seed`
+  and `rosterFingerprint` back; it fails if the roster changed in the meantime.
+
+Unlike `/start`, this path uses only players who are already `checked_in`. It moves the tournament
+to `qualification` all the same.
+
+The plan can be cancelled only before any match is assigned to a court; cancelling removes every
+qualification match and returns the tournament to `draft`, reopening the roster.
 
 ```ts
-export type TournamentStatus = "planned" | "in_progress" | "completed";
+export type TournamentStatus =
+  | "draft"          // created; players are being associated
+  | "qualification"  // started; qualification matches are being played
+  | "finals"         // qualification is over; final matches are being played
+  | "completed";     // everything played; read-only
 
 export interface Tournament {
   _id: string;
@@ -145,7 +186,6 @@ export interface Tournament {
     queueMode: "dynamic";
   };
   qualification: {
-    status: "draft" | "generated" | "in_progress" | "completed";
     seed?: string;
     rosterFingerprint?: string;
     generatedAt?: string;
@@ -168,6 +208,7 @@ Endpoints:
 | `PATCH` | `/tournaments/:id` | `{ message, tournament }` |
 | `DELETE` | `/tournaments/:id` | `{ message }` |
 | `GET` | `/tournaments/:id/setup` | `{ tournament, attendance, readiness }` |
+| `POST` | `/tournaments/:id/start` | `{ message, tournament, matches, idempotent }` |
 | `GET` | `/tournaments/:id/available-players` | `{ players: Player[] }` |
 | `POST` | `/tournaments/:id/registrations/bulk` | `{ registrations, summary: { created, alreadyRegistered } }` |
 | `DELETE` | `/tournaments/:id/registrations/bulk` | `{ message, summary: { deleted } }` |
@@ -182,15 +223,15 @@ Create payload:
   "endDate": "2026-09-12T18:00:00.000Z",
   "category": "U12",
   "winPoints": 10,
-  "status": "planned",
   "courts": [{ "name": "Court 1" }],
   "finalGroups": [{ "themeName": "Gold", "level": 1 }]
 }
 ```
 
 Only `name` is required. `startDate` and `endDate` are optional; when both are supplied, `endDate`
-cannot precede `startDate`. A `PATCH` accepts any non-empty subset of these fields. Deletion
-returns `409` while registrations or matches reference the tournament.
+cannot precede `startDate`. `status` is not accepted — a new tournament always starts as `draft`. A
+`PATCH` accepts any non-empty subset of the remaining fields. Deletion returns `409` while
+registrations or matches reference the tournament.
 
 A player can only be registered if they have a name or a jersey number; a nameless player's jersey
 number is copied onto the registration automatically.

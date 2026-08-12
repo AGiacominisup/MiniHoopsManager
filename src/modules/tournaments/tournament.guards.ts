@@ -19,8 +19,8 @@ export const loadTournament = async (
 };
 
 export const assertRosterUnlocked = (tournament: TournamentEntity): void => {
-  if (tournament.qualification.status !== "draft") {
-    throw new ApiError(409, "Roster is locked after qualification generation");
+  if (tournament.status !== "draft") {
+    throw new ApiError(409, "Roster is locked once the tournament has started");
   }
 };
 

@@ -181,18 +181,15 @@ export const completeMatch = async (matchId: string, scoreA: number, scoreB: num
         phase: "qualification",
         status: { $in: ["queued", "ready", "in_progress"] }
       }).session(session);
-      await TournamentModel.updateOne(
-        { _id: tournament._id },
-        !remaining
-          ? { $set: { "qualification.status": "completed", status: "completed" } }
-          : {
-              $set: {
-                "qualification.status": "in_progress",
-                status: "in_progress"
-              }
-            },
-        { session }
-      );
+      if (!remaining) {
+        // Once the finals generator exists this transition becomes
+        // qualification -> finals, and only the last final closes the tournament.
+        await TournamentModel.updateOne(
+          { _id: tournament._id, status: "qualification" },
+          { $set: { status: "completed" } },
+          { session }
+        );
+      }
     });
     return { match: completedMatch, nextMatch, idempotent };
   } finally {

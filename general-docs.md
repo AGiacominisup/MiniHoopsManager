@@ -535,47 +535,75 @@ The score entry should therefore trigger the appropriate ranking recalculation/u
 
 # 15. Tournament Lifecycle
 
-The lifecycle is expressed with **two independent axes** rather than a single state machine.
+The lifecycle is a **single linear progression** on `Tournament.status`. There is no second axis to
+cross-reference: one field answers "where is this tournament?".
 
 ```text
-Tournament.status              planned → in_progress → completed
-Tournament.qualification.status  draft → generated → in_progress → completed
+draft ──start──> qualification ──last qualification game──> completed
+                       │
+                       └── (not yet implemented) ──> finals ──> completed
 ```
 
-`status` describes the event as a whole. `qualification.status` describes the competitive phase and
-is what actually gates the engine.
+The status is **engine-managed**. It is not accepted on tournament create or update, and moves only
+through the start action, game completion, and cancellation.
 
 ### draft
 
-Players can be added, removed, checked in and withdrawn. Courts and tournament configuration are
-still editable. This is the phase the document previously called *Registration*.
+The tournament exists and the roster is being built. Players can be associated, removed, marked
+present or withdrawn. Courts and configuration are still editable.
 
-### generated
+Players arrive over time, so this phase is expected to span several editing sessions.
 
-The plan exists as a queue of games. The **roster, courts and configuration are locked** — every
-registration mutation returns `409`. The plan can still be discarded entirely with
-`DELETE /tournaments/{id}/qualification`, which removes every qualification game and returns the
-tournament to `draft`.
+### qualification
 
-### in_progress
+The schedule exists as a queue of games and is being played. The **roster, courts and configuration
+are locked** — every registration mutation returns `409`. This is what freezes the participant set
+the schedule was computed from.
 
-At least one game has been completed. Regeneration is no longer possible, which protects historical
-results and player statistics.
+Results arrive from the scorekeepers as games are completed, each one updating the tournament
+statistics of the six registrations involved.
+
+The plan can still be discarded with `DELETE /tournaments/{id}/qualification`, but only while no
+game has been assigned to a court. That removes every qualification game and returns the tournament
+to `draft`, reopening the roster. Once a game has started, discarding is refused: it would
+invalidate recorded results.
+
+### finals
+
+**Not implemented.** Reserved for the phase where players are grouped by tournament ranking and
+assigned to final games. `Tournament.finalGroups` and `Registration.finalGroupId` already exist as
+its data model, but there is no generator and no transition into this state.
+
+Until it exists, completing the last qualification game moves the tournament directly to
+`completed`. When the generator lands, that transition becomes `qualification → finals`, and only
+the last final closes the tournament.
 
 ### completed
 
-No qualification game is left queued, ready or in progress. `Tournament.status` is moved to
-`completed` at the same time.
-
-Finals are not yet implemented. `finalGroups` and `Registration.finalGroupId` already exist as the
-data model for that phase, but no finals generator is wired up.
+Every game has been played and the awards can be given out. The tournament is effectively
+read-only, and exists to be queried for results and statistics.
 
 ---
 
 # 16. Tournament Generation
 
-Generation is a distinct, two-step operation: an idempotent **preview** followed by an explicit
-**commit**.
+The primary entry point is a single **start** action, matching the operator's mental model: the
+roster is built over time as players arrive, and one button starts the tournament.
+
+```http
+POST /tournaments/{tournamentId}/start
+```
+
+It freezes the roster, generates the schedule and puts the tournament in play, in one transaction.
+Every player still associated is treated as present — the action itself marks each non-withdrawn
+registration as checked in — so attendance is not a separate step the operator has to remember.
+Absentees are excluded by marking them `withdrawn` before starting.
+
+Replaying `start` while the plan is still unstarted returns the existing schedule rather than
+generating a second one.
+
+For the cases where the draw should be inspected before it is committed, the same generation is
+also exposed as a two-step operation: an idempotent **preview** followed by an explicit **commit**.
 
 ```http
 POST /tournaments/{tournamentId}/qualification/preview
@@ -598,7 +626,7 @@ The operation:
 3. identifies players receiving an additional appearance;
 4. generates and scores candidate team splits;
 5. persists the games as an ordered queue, with no court assigned;
-6. locks the roster by moving `qualification.status` to `generated`;
+6. locks the roster by moving `Tournament.status` to `qualification`;
 7. returns the generated schedule.
 
 Steps 5 and 6 run inside a single MongoDB transaction, and the roster is re-read and

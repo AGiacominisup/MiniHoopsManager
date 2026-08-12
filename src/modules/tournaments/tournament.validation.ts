@@ -7,7 +7,6 @@ const tournamentFields = {
   endDate: z.string().datetime().optional(),
   category: z.string().trim().min(2).optional(),
   winPoints: z.number().int().min(1).optional(),
-  status: z.enum(["planned", "in_progress", "completed"]).optional(),
   courts: z
     .array(
       z.object({
@@ -38,6 +37,10 @@ const tournamentFields = {
 };
 
 export const qualificationPreviewSchema = z.object({
+  seed: z.string().trim().min(1).max(100).optional()
+});
+
+export const tournamentStartSchema = z.object({
   seed: z.string().trim().min(1).max(100).optional()
 });
 

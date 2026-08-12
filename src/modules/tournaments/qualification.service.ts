@@ -56,8 +56,8 @@ export const evaluateQualificationReadiness = (
   if (!tournament.courts.some((court) => court.enabled)) {
     blockers.push("At least one court must be enabled");
   }
-  if (tournament.qualification.status !== "draft") {
-    blockers.push("Qualification matches have already been generated");
+  if (tournament.status !== "draft") {
+    blockers.push("The tournament has already started");
   }
 
   return blockers;
@@ -130,6 +130,65 @@ const buildPlanOrFail = (context: QualificationContext, seed: string): Qualifica
   }
 };
 
+/**
+ * Claims the tournament and writes the plan. Shared by the two-step
+ * preview/generate handshake and the one-shot start action.
+ */
+const persistQualificationPlan = async (
+  tournamentId: string,
+  plan: QualificationPlan,
+  seed: string,
+  rosterFingerprint: string,
+  session: ClientSession
+): Promise<{
+  tournament: TournamentEntity;
+  matches: mongoose.HydratedDocument<MatchDocument>[];
+}> => {
+  const existingMatches = await MatchModel.exists({
+    tournamentId,
+    phase: "qualification"
+  }).session(session);
+  if (existingMatches) {
+    throw new ApiError(409, "Qualification matches already exist for this tournament");
+  }
+
+  const tournament = await TournamentModel.findOneAndUpdate(
+    { _id: tournamentId, status: "draft" },
+    {
+      $set: {
+        status: "qualification",
+        "qualification.seed": seed,
+        "qualification.rosterFingerprint": rosterFingerprint,
+        "qualification.generatedAt": new Date(),
+        "qualification.totalMatches": plan.matches.length
+      }
+    },
+    { new: true, runValidators: true, session }
+  );
+  if (!tournament) {
+    throw new ApiError(409, "The tournament is no longer in draft state");
+  }
+
+  const matches = await MatchModel.create(
+    plan.matches.map((match) => ({
+      tournamentId,
+      courtId: null,
+      finalGroupId: null,
+      phase: "qualification",
+      status: "queued",
+      scoreA: 0,
+      scoreB: 0,
+      teams: match.teams,
+      queuePosition: match.queuePosition,
+      generationSeed: seed,
+      rosterFingerprint
+    })),
+    { session }
+  );
+
+  return { tournament, matches };
+};
+
 export const previewQualification = async (tournamentId: string, requestedSeed?: string) => {
   const context = await loadQualificationContext(tournamentId);
   const seed = requestedSeed ?? randomUUID();
@@ -148,7 +207,7 @@ export const generateQualification = async (
   // An already-generated plan is answered before any roster validation, so a
   // retry of a committed generation cannot fail on roster changes that happened
   // after it succeeded.
-  if (tournament.qualification.status !== "draft") {
+  if (tournament.status !== "draft") {
     if (
       tournament.qualification.seed !== seed ||
       tournament.qualification.rosterFingerprint !== expectedFingerprint
@@ -178,7 +237,7 @@ export const generateQualification = async (
 
     await session.withTransaction(async () => {
       // The roster is re-read and re-fingerprinted inside the transaction: the
-      // roster lock only engages once qualification leaves "draft", so the read
+      // roster lock only engages once the tournament leaves "draft", so the read
       // performed before the transaction is not authoritative.
       const freshContext = await loadQualificationContext(tournamentId, session);
       if (freshContext.rosterFingerprint !== expectedFingerprint) {
@@ -186,53 +245,85 @@ export const generateQualification = async (
       }
 
       const plan = buildPlanOrFail(freshContext, seed);
-
-      const existingMatches = await MatchModel.exists({
+      const persisted = await persistQualificationPlan(
         tournamentId,
-        phase: "qualification"
-      }).session(session);
-      if (existingMatches) {
-        throw new ApiError(409, "Qualification matches already exist for this tournament");
-      }
-
-      const freshTournament = await TournamentModel.findOneAndUpdate(
-        { _id: tournamentId, "qualification.status": "draft" },
-        {
-          $set: {
-            "qualification.status": "generated",
-            "qualification.seed": seed,
-            "qualification.rosterFingerprint": expectedFingerprint,
-            "qualification.generatedAt": new Date(),
-            "qualification.totalMatches": plan.matches.length
-          }
-        },
-        { new: true, runValidators: true, session }
-      );
-      if (!freshTournament) {
-        throw new ApiError(409, "Tournament qualification is no longer in draft state");
-      }
-
-      createdMatches = await MatchModel.create(
-        plan.matches.map((match) => ({
-          tournamentId,
-          courtId: null,
-          finalGroupId: null,
-          phase: "qualification",
-          status: "queued",
-          scoreA: 0,
-          scoreB: 0,
-          teams: match.teams,
-          queuePosition: match.queuePosition,
-          generationSeed: seed,
-          rosterFingerprint: expectedFingerprint
-        })),
-        { session }
+        plan,
+        seed,
+        expectedFingerprint,
+        session
       );
 
-      generatedTournament = freshTournament;
+      createdMatches = persisted.matches;
+      generatedTournament = persisted.tournament;
     });
 
     return { tournament: generatedTournament, matches: createdMatches, idempotent: false };
+  } finally {
+    await session.endSession();
+  }
+};
+
+/**
+ * One-shot start: freeze the roster, generate the schedule and put the
+ * tournament in play. Everyone still associated is considered present, so the
+ * caller does not have to check players in first.
+ */
+export const startTournament = async (tournamentId: string, requestedSeed?: string) => {
+  const tournament = await loadTournament(tournamentId);
+
+  if (tournament.status === "qualification") {
+    const matches = await MatchModel.find({ tournamentId, phase: "qualification" }).sort({
+      queuePosition: 1
+    });
+    return { tournament, matches, idempotent: true };
+  }
+  if (tournament.status !== "draft") {
+    throw new ApiError(409, "The tournament has already started");
+  }
+
+  // Reported before the automatic check-in so the message names what the caller
+  // actually controls: how many players are associated.
+  const availablePlayers = await RegistrationModel.countDocuments({
+    tournamentId,
+    attendanceStatus: { $ne: "withdrawn" }
+  });
+  if (availablePlayers < tournament.configuration.playersPerMatch) {
+    throw new ApiError(
+      409,
+      `At least ${tournament.configuration.playersPerMatch} players must be associated with the tournament`
+    );
+  }
+
+  const seed = requestedSeed ?? randomUUID();
+  const session = await mongoose.startSession();
+  try {
+    let createdMatches: mongoose.HydratedDocument<MatchDocument>[] = [];
+    let startedTournament = tournament;
+
+    await session.withTransaction(async () => {
+      // Withdrawn players keep their status; everyone else is marked present.
+      // Already checked-in players keep their original timestamp.
+      await RegistrationModel.updateMany(
+        { tournamentId, attendanceStatus: "registered" },
+        { $set: { attendanceStatus: "checked_in", checkedInAt: new Date() } },
+        { session }
+      );
+
+      const context = await loadQualificationContext(tournamentId, session);
+      const plan = buildPlanOrFail(context, seed);
+      const persisted = await persistQualificationPlan(
+        tournamentId,
+        plan,
+        seed,
+        context.rosterFingerprint,
+        session
+      );
+
+      createdMatches = persisted.matches;
+      startedTournament = persisted.tournament;
+    });
+
+    return { tournament: startedTournament, matches: createdMatches, idempotent: false };
   } finally {
     await session.endSession();
   }
@@ -256,7 +347,9 @@ export const cancelQualification = async (tournamentId: string): Promise<void> =
       // one behind would block regeneration forever while cancel reports success.
       await MatchModel.deleteMany({ tournamentId, phase: "qualification" }).session(session);
 
-      Object.assign(tournament.qualification, { status: "draft", totalMatches: 0 });
+      // Cancelling returns the tournament to the roster-building phase.
+      tournament.status = "draft";
+      tournament.qualification.totalMatches = 0;
       tournament.qualification.seed = undefined;
       tournament.qualification.rosterFingerprint = undefined;
       tournament.qualification.generatedAt = undefined;

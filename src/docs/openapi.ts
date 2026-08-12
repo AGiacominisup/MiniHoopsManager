@@ -61,7 +61,6 @@ export const openApiSpec = {
           endDate: { type: "string", format: "date-time", nullable: true, example: "2026-09-12T18:00:00.000Z" },
           category: { type: "string", example: "U12" },
           winPoints: { type: "integer", example: 10 },
-          status: { type: "string", enum: ["planned", "in_progress", "completed"], example: "planned" },
           courts: {
             type: "array",
             items: {
@@ -94,7 +93,11 @@ export const openApiSpec = {
           endDate: { type: "string", format: "date-time", nullable: true },
           category: { type: "string" },
           winPoints: { type: "integer" },
-          status: { type: "string", enum: ["planned", "in_progress", "completed"] },
+          status: {
+            type: "string",
+            enum: ["draft", "qualification", "finals", "completed"],
+            description: "Engine-managed lifecycle; not writable by clients"
+          },
           configuration: {
             type: "object",
             properties: {
@@ -109,7 +112,6 @@ export const openApiSpec = {
           qualification: {
             type: "object",
             properties: {
-              status: { type: "string", enum: ["draft", "generated", "in_progress", "completed"] },
               seed: { type: "string" },
               rosterFingerprint: { type: "string" },
               generatedAt: { type: "string", format: "date-time" },
@@ -382,6 +384,15 @@ export const openApiSpec = {
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
         requestBody: { required: true, content: { "application/json": { schema: { type: "object", required: ["attendanceStatus"], properties: { attendanceStatus: { type: "string", enum: ["checked_in", "withdrawn"] }, registrationIds: { type: "array", minItems: 1, maxItems: 500, items: { type: "string" } } } } } } },
         responses: { "200": { description: "Update summary" }, "409": { description: "Roster locked" } }
+      }
+    },
+    "/api/tournaments/{id}/start": {
+      post: {
+        tags: ["Tournaments"], summary: "Start the tournament and generate its match queue", security: [{ bearerAuth: [] }],
+        description: "One-shot alternative to the preview/generate handshake. Marks every non-withdrawn player as checked in, generates the qualification queue and moves the tournament to in_progress. Replaying it while the plan is still unstarted returns the existing schedule with 200.",
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+        requestBody: { content: { "application/json": { schema: { type: "object", properties: { seed: { type: "string", description: "Optional, for reproducible schedules" } } } } } },
+        responses: { "201": { description: "Tournament started and matches generated" }, "200": { description: "Already started, existing schedule returned" }, "409": { description: "Too few players, no enabled court, or the tournament is already under way" } }
       }
     },
     "/api/tournaments/{id}/qualification/preview": {
