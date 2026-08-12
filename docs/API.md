@@ -103,17 +103,27 @@ Common status codes:
 The first supported format is always individual rotating-teams `3v3`. Teams are temporary match
 snapshots, not persistent entities. A tournament is prepared and started with this flow:
 
-1. Create a draft tournament with courts and `qualificationAppearancesPerPlayer`.
-2. Associate existing players with `POST /tournaments/:id/registrations/bulk`.
-3. Check players in with `PATCH /registrations/:id/attendance`.
+1. Create a draft tournament with courts and `qualificationAppearancesPerPlayer`. Dates are optional.
+2. Pick from `GET /tournaments/:id/available-players`, then associate them with
+  `POST /tournaments/:id/registrations/bulk`. Removal uses the same path with `DELETE`.
+3. Check everyone in with `PATCH /tournaments/:id/registrations/attendance` (omit `registrationIds`
+  to apply the status to the whole roster), or one player at a time with
+  `PATCH /registrations/:id/attendance`.
 4. Read blockers with `GET /tournaments/:id/setup`.
 5. Preview deterministic matches with `POST /tournaments/:id/qualification/preview`.
 6. Confirm the returned seed and fingerprint with `POST /tournaments/:id/qualification/generate`.
 7. Reserve a queued match on a court, start it, then complete it. Completion reserves the next
   compatible match on the same court but does not start it.
 
+Generation requires at least `playersPerMatch` checked-in players **and** at least one enabled
+court; `GET /tournaments/:id/setup` reports exactly the blockers the generator enforces.
+
+Only checked-in players enter the plan. Matches are generated as an ordered queue with
+`courtId: null` and are bound to a court at run time, so there is no fixed round structure.
+
 Once matches are generated, roster, courts and tournament configuration are locked. The plan can
-be cancelled only before any match is assigned to a court.
+be cancelled only before any match is assigned to a court; cancelling removes every qualification
+match of the tournament.
 
 ```ts
 export type TournamentStatus = "planned" | "in_progress" | "completed";
@@ -121,8 +131,8 @@ export type TournamentStatus = "planned" | "in_progress" | "completed";
 export interface Tournament {
   _id: string;
   name: string;
-  startDate: string;
-  endDate: string;
+  startDate?: string;
+  endDate?: string;
   category?: string;
   winPoints: number;
   status: TournamentStatus;
@@ -157,6 +167,11 @@ Endpoints:
 | `GET` | `/tournaments/:id` | `{ tournament }` |
 | `PATCH` | `/tournaments/:id` | `{ message, tournament }` |
 | `DELETE` | `/tournaments/:id` | `{ message }` |
+| `GET` | `/tournaments/:id/setup` | `{ tournament, attendance, readiness }` |
+| `GET` | `/tournaments/:id/available-players` | `{ players: Player[] }` |
+| `POST` | `/tournaments/:id/registrations/bulk` | `{ registrations, summary: { created, alreadyRegistered } }` |
+| `DELETE` | `/tournaments/:id/registrations/bulk` | `{ message, summary: { deleted } }` |
+| `PATCH` | `/tournaments/:id/registrations/attendance` | `{ message, summary: { modified } }` |
 
 Create payload:
 
@@ -173,9 +188,12 @@ Create payload:
 }
 ```
 
-`name`, `startDate`, and `endDate` are required. `endDate` cannot precede `startDate`. A `PATCH`
-accepts any non-empty subset of these fields. Deletion returns `409` while registrations or
-matches reference the tournament.
+Only `name` is required. `startDate` and `endDate` are optional; when both are supplied, `endDate`
+cannot precede `startDate`. A `PATCH` accepts any non-empty subset of these fields. Deletion
+returns `409` while registrations or matches reference the tournament.
+
+A player can only be registered if they have a name or a jersey number; a nameless player's jersey
+number is copied onto the registration automatically.
 
 ## Players
 
@@ -261,9 +279,15 @@ registration.
 
 ## Matches
 
-Generated qualification matches have no scheduled time. They move through
-`queued -> ready -> in_progress -> completed`; `ready` means reserved on a court and waiting for an
-explicit Start command.
+Generated qualification matches have no scheduled time and no court until they are assigned. They
+move through `queued -> ready -> in_progress -> completed`; `ready` means reserved on a court and
+waiting for an explicit Start command.
+
+Qualification matches are owned by the tournament generator: `POST` and `PATCH` reject
+`phase: "qualification"` with `409`, and generated matches cannot be edited or deleted
+individually. Use `DELETE /tournaments/:id/qualification` to discard a whole plan.
+
+To read a generated schedule, filter on `status=queued`; results are ordered by `queuePosition`.
 
 ```ts
 export type MatchPhase = "qualification" | "final";
@@ -278,11 +302,12 @@ export interface MatchPlayer {
 export interface Match {
   _id: string;
   tournamentId: string;
-  courtId: string;
+  courtId: string | null;
   finalGroupId: string | null;
   phase: MatchPhase;
-  scheduledAt: string;
+  scheduledAt?: string;
   status: MatchStatus;
+  queuePosition?: number;
   scoreA: number;
   scoreB: number;
   teams: Array<{
@@ -309,7 +334,7 @@ Create payload:
   "tournamentId": "66b000000000000000000001",
   "courtId": "66b000000000000000000010",
   "finalGroupId": null,
-  "phase": "qualification",
+  "phase": "final",
   "scheduledAt": "2026-09-10T10:00:00.000Z",
   "status": "scheduled",
   "scoreA": 0,

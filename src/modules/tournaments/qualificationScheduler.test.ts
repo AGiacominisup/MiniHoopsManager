@@ -45,6 +45,27 @@ test("balances extra appearances when requested slots are not divisible by six",
   assert.deepEqual(Object.fromEntries(appearances), plan.targets);
 });
 
+test("produces a valid plan across realistic roster and appearance sizes", () => {
+  for (let count = 6; count <= 40; count += 1) {
+    for (let appearances = 1; appearances <= 6; appearances += 1) {
+      const plan = buildQualificationPlan(players(count), appearances, `sweep-${count}-${appearances}`);
+      const targetValues = Object.values(plan.targets);
+
+      assert.ok(plan.metrics.maxAppearanceDifference <= 1);
+      // The greedy allocator only stays feasible while no player needs more
+      // appearances than there are matches; guard it for future custom targets.
+      assert.ok(Math.max(...targetValues) <= targetValues.reduce((sum, value) => sum + value, 0) / 6);
+
+      for (const match of plan.matches) {
+        const ids = match.teams.flatMap((team) => team.players.map((player) => player.registrationId));
+        assert.equal(match.teams[0].players.length, 3);
+        assert.equal(match.teams[1].players.length, 3);
+        assert.equal(new Set(ids).size, 6);
+      }
+    }
+  }
+});
+
 test("rejects fewer than six players and duplicate registrations", () => {
   assert.throws(() => buildQualificationPlan(players(5), 3, "too-few"), /At least 6/);
   const duplicatePlayers = players(6);

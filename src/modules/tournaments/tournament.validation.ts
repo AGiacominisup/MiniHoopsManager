@@ -1,9 +1,10 @@
 import { z } from "zod";
+import { objectIdSchema } from "../../utils/validation";
 
 const tournamentFields = {
   name: z.string().trim().min(3),
-  startDate: z.string().datetime(),
-  endDate: z.string().datetime(),
+  startDate: z.string().datetime().optional(),
+  endDate: z.string().datetime().optional(),
   category: z.string().trim().min(2).optional(),
   winPoints: z.number().int().min(1).optional(),
   status: z.enum(["planned", "in_progress", "completed"]).optional(),
@@ -46,15 +47,24 @@ export const qualificationGenerateSchema = z.object({
 });
 
 export const bulkTournamentRegistrationsSchema = z.object({
-  playerIds: z.array(z.string()).min(1)
+  playerIds: z.array(objectIdSchema).min(1).max(200)
+});
+
+export const bulkAttendanceSchema = z.object({
+  attendanceStatus: z.enum(["checked_in", "withdrawn"]),
+  registrationIds: z.array(objectIdSchema).min(1).max(500).optional()
 });
 
 export const createTournamentSchema = z
   .object(tournamentFields)
-  .refine((data) => new Date(data.endDate) >= new Date(data.startDate), {
-    message: "endDate must be after startDate",
-    path: ["endDate"]
-  });
+  .refine(
+    (data) =>
+      !data.startDate || !data.endDate || new Date(data.endDate) >= new Date(data.startDate),
+    {
+      message: "endDate must be after startDate",
+      path: ["endDate"]
+    }
+  );
 
 export const updateTournamentSchema = z.object(tournamentFields).partial().refine(
   (data) => Object.keys(data).length > 0,

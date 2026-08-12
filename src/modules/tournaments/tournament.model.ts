@@ -33,8 +33,8 @@ export interface QualificationConfiguration {
 
 export interface TournamentDocument {
   name: string;
-  startDate: Date;
-  endDate: Date;
+  startDate?: Date;
+  endDate?: Date;
   category?: string;
   winPoints: number;
   status: TournamentStatus;
@@ -72,7 +72,17 @@ const tournamentConfigurationSchema = new Schema<TournamentConfiguration>(
     },
     teamSize: { type: Number, enum: [3], default: 3, required: true },
     playersPerMatch: { type: Number, enum: [6], default: 6, required: true },
-    qualificationAppearancesPerPlayer: { type: Number, min: 1, default: 4, required: true },
+    qualificationAppearancesPerPlayer: {
+      type: Number,
+      min: 1,
+      max: 20,
+      default: 4,
+      required: true,
+      validate: {
+        validator: Number.isInteger,
+        message: "qualificationAppearancesPerPlayer must be an integer."
+      }
+    },
     queueMode: { type: String, enum: ["dynamic"], default: "dynamic", required: true }
   },
   { _id: false }
@@ -97,8 +107,8 @@ const qualificationConfigurationSchema = new Schema<QualificationConfiguration>(
 const tournamentSchema = new Schema<TournamentDocument>(
   {
     name: { type: String, required: true, trim: true },
-    startDate: { type: Date, required: true },
-    endDate: { type: Date, required: true },
+    startDate: { type: Date },
+    endDate: { type: Date },
     category: { type: String, trim: true },
     winPoints: { type: Number, default: 10, min: 1 },
     status: {

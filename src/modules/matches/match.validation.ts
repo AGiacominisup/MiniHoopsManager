@@ -50,7 +50,9 @@ export const updateMatchSchema = z.object(matchFields).partial().refine(
 export const matchQuerySchema = z.object({
   tournamentId: objectIdSchema.optional(),
   phase: z.enum(["qualification", "final"]).optional(),
-  status: z.enum(["scheduled", "in_progress", "completed"]).optional()
+  status: z
+    .enum(["scheduled", "queued", "ready", "in_progress", "completed"])
+    .optional()
 });
 
 export const completeMatchSchema = z

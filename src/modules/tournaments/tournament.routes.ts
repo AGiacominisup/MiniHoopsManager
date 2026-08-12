@@ -5,11 +5,14 @@ import {
 	createTournament,
 	assignNextTournamentMatch,
 	bulkRegisterPlayers,
+	bulkUnregisterPlayers,
+	bulkUpdateAttendance,
 	cancelTournamentQualification,
 	deleteTournament,
 	generateTournamentQualification,
 	getTournament,
 	getTournamentSetup,
+	listAvailablePlayers,
 	listTournaments,
 	previewTournamentQualification,
 	updateTournament
@@ -20,7 +23,10 @@ export const tournamentRouter = Router();
 tournamentRouter.get("/", requireAuth, asyncHandler(listTournaments));
 tournamentRouter.post("/", requireAuth, requireRole(["admin", "staff"]), asyncHandler(createTournament));
 tournamentRouter.get("/:id/setup", requireAuth, asyncHandler(getTournamentSetup));
+tournamentRouter.get("/:id/available-players", requireAuth, asyncHandler(listAvailablePlayers));
 tournamentRouter.post("/:id/registrations/bulk", requireAuth, requireRole(["admin", "staff"]), asyncHandler(bulkRegisterPlayers));
+tournamentRouter.delete("/:id/registrations/bulk", requireAuth, requireRole(["admin", "staff"]), asyncHandler(bulkUnregisterPlayers));
+tournamentRouter.patch("/:id/registrations/attendance", requireAuth, requireRole(["admin", "staff"]), asyncHandler(bulkUpdateAttendance));
 tournamentRouter.post("/:id/qualification/preview", requireAuth, requireRole(["admin", "staff"]), asyncHandler(previewTournamentQualification));
 tournamentRouter.post("/:id/qualification/generate", requireAuth, requireRole(["admin", "staff"]), asyncHandler(generateTournamentQualification));
 tournamentRouter.delete("/:id/qualification", requireAuth, requireRole(["admin", "staff"]), asyncHandler(cancelTournamentQualification));

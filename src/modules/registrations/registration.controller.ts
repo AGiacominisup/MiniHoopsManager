@@ -3,6 +3,7 @@ import { ApiError } from "../../utils/ApiError";
 import { idParamsSchema } from "../../utils/validation";
 import { MatchModel } from "../matches/match.model";
 import { PlayerModel } from "../players/player.model";
+import { assertRosterUnlocked, loadUnlockedTournament } from "../tournaments/tournament.guards";
 import { TournamentModel } from "../tournaments/tournament.model";
 import { RegistrationModel } from "./registration.model";
 import {
@@ -25,9 +26,7 @@ const validateRegistrationReferences = async (
   if (!tournament) {
     throw new ApiError(400, "Referenced tournament not found");
   }
-  if (tournament.qualification.status !== "draft") {
-    throw new ApiError(409, "Roster is locked after qualification generation");
-  }
+  assertRosterUnlocked(tournament);
   if (!player) {
     throw new ApiError(400, "Referenced player not found");
   }
@@ -112,10 +111,7 @@ export const deleteRegistration = async (req: Request, res: Response): Promise<v
   if (!existingRegistration) {
     throw new ApiError(404, "Registration not found");
   }
-  const tournament = await TournamentModel.findById(existingRegistration.tournamentId);
-  if (tournament?.qualification.status !== "draft") {
-    throw new ApiError(409, "Roster is locked after qualification generation");
-  }
+  await loadUnlockedTournament(String(existingRegistration.tournamentId));
   const hasMatches = await MatchModel.exists({ "teams.players.registrationId": id });
   if (hasMatches) {
     throw new ApiError(409, "Registration cannot be deleted while matches reference it");
@@ -134,13 +130,7 @@ export const updateAttendance = async (req: Request, res: Response): Promise<voi
     throw new ApiError(404, "Registration not found");
   }
 
-  const tournament = await TournamentModel.findById(registration.tournamentId);
-  if (!tournament) {
-    throw new ApiError(404, "Tournament not found");
-  }
-  if (tournament.qualification.status !== "draft") {
-    throw new ApiError(409, "Roster is locked after qualification generation");
-  }
+  await loadUnlockedTournament(String(registration.tournamentId));
 
   registration.attendanceStatus = attendanceStatus;
   registration.checkedInAt = attendanceStatus === "checked_in" ? new Date() : null;

@@ -1,13 +1,14 @@
 import type { Request, Response } from "express";
-import { Types } from "mongoose";
 import { ApiError } from "../../utils/ApiError";
 import { idParamsSchema, tournamentCourtParamsSchema } from "../../utils/validation";
 import { MatchModel } from "../matches/match.model";
 import { RegistrationModel } from "../registrations/registration.model";
 import { PlayerModel } from "../players/player.model";
 import { assignNextMatch } from "../matches/matchQueue.service";
+import { loadTournament, loadUnlockedTournament } from "./tournament.guards";
 import { TournamentModel } from "./tournament.model";
 import {
+  bulkAttendanceSchema,
   bulkTournamentRegistrationsSchema,
   createTournamentSchema,
   qualificationGenerateSchema,
@@ -16,6 +17,7 @@ import {
 } from "./tournament.validation";
 import {
   cancelQualification,
+  evaluateQualificationReadiness,
   generateQualification,
   previewQualification
 } from "./qualification.service";
@@ -25,8 +27,8 @@ export const createTournament = async (req: Request, res: Response): Promise<voi
 
   const tournament = await TournamentModel.create({
     name: body.name,
-    startDate: new Date(body.startDate),
-    endDate: new Date(body.endDate),
+    ...(body.startDate && { startDate: new Date(body.startDate) }),
+    ...(body.endDate && { endDate: new Date(body.endDate) }),
     category: body.category,
     winPoints: body.winPoints,
     status: body.status,
@@ -39,17 +41,13 @@ export const createTournament = async (req: Request, res: Response): Promise<voi
 };
 
 export const listTournaments = async (_req: Request, res: Response): Promise<void> => {
-  const tournaments = await TournamentModel.find().sort({ startDate: 1 });
+  const tournaments = await TournamentModel.find().sort({ startDate: 1, createdAt: 1 });
   res.status(200).json({ tournaments });
 };
 
 export const getTournament = async (req: Request, res: Response): Promise<void> => {
   const { id } = idParamsSchema.parse(req.params);
-  const tournament = await TournamentModel.findById(id);
-
-  if (!tournament) {
-    throw new ApiError(404, "Tournament not found");
-  }
+  const tournament = await loadTournament(id);
 
   res.status(200).json({ tournament });
 };
@@ -57,11 +55,7 @@ export const getTournament = async (req: Request, res: Response): Promise<void> 
 export const updateTournament = async (req: Request, res: Response): Promise<void> => {
   const { id } = idParamsSchema.parse(req.params);
   const body = updateTournamentSchema.parse(req.body);
-  const tournament = await TournamentModel.findById(id);
-
-  if (!tournament) {
-    throw new ApiError(404, "Tournament not found");
-  }
+  const tournament = await loadTournament(id);
 
   if (tournament.qualification.status !== "draft" && (body.configuration || body.courts)) {
     throw new ApiError(409, "Tournament configuration and courts are locked after generation");
@@ -69,7 +63,7 @@ export const updateTournament = async (req: Request, res: Response): Promise<voi
 
   const startDate = body.startDate ? new Date(body.startDate) : tournament.startDate;
   const endDate = body.endDate ? new Date(body.endDate) : tournament.endDate;
-  if (endDate < startDate) {
+  if (startDate && endDate && endDate < startDate) {
     throw new ApiError(400, "endDate must be after startDate");
   }
 
@@ -104,26 +98,14 @@ export const deleteTournament = async (req: Request, res: Response): Promise<voi
 
 export const getTournamentSetup = async (req: Request, res: Response): Promise<void> => {
   const { id } = idParamsSchema.parse(req.params);
-  const tournament = await TournamentModel.findById(id);
-  if (!tournament) {
-    throw new ApiError(404, "Tournament not found");
-  }
+  const tournament = await loadTournament(id);
 
   const [registered, checkedIn, withdrawn] = await Promise.all([
     RegistrationModel.countDocuments({ tournamentId: id, attendanceStatus: "registered" }),
     RegistrationModel.countDocuments({ tournamentId: id, attendanceStatus: "checked_in" }),
     RegistrationModel.countDocuments({ tournamentId: id, attendanceStatus: "withdrawn" })
   ]);
-  const blockers: string[] = [];
-  if (checkedIn < tournament.configuration.playersPerMatch) {
-    blockers.push("At least 6 players must be checked in");
-  }
-  if (!tournament.courts.some((court) => court.enabled)) {
-    blockers.push("At least one court must be enabled");
-  }
-  if (tournament.qualification.status !== "draft") {
-    blockers.push("Qualification matches have already been generated");
-  }
+  const blockers = evaluateQualificationReadiness(tournament, checkedIn);
 
   res.status(200).json({
     tournament,
@@ -132,34 +114,108 @@ export const getTournamentSetup = async (req: Request, res: Response): Promise<v
   });
 };
 
+export const listAvailablePlayers = async (req: Request, res: Response): Promise<void> => {
+  const { id } = idParamsSchema.parse(req.params);
+  await loadTournament(id);
+
+  const registrations = await RegistrationModel.find({ tournamentId: id }).select({ playerId: 1 });
+  const players = await PlayerModel.find({
+    _id: { $nin: registrations.map((registration) => registration.playerId) }
+  }).sort({ lastName: 1, firstName: 1 });
+
+  res.status(200).json({ players });
+};
+
 export const bulkRegisterPlayers = async (req: Request, res: Response): Promise<void> => {
   const { id } = idParamsSchema.parse(req.params);
   const body = bulkTournamentRegistrationsSchema.parse(req.body);
   const playerIds = [...new Set(body.playerIds)];
-  if (playerIds.some((playerId) => !Types.ObjectId.isValid(playerId))) {
-    throw new ApiError(400, "Every playerId must be a valid MongoDB ObjectId");
-  }
 
-  const tournament = await TournamentModel.findById(id);
-  if (!tournament) {
-    throw new ApiError(404, "Tournament not found");
-  }
-  if (tournament.qualification.status !== "draft") {
-    throw new ApiError(409, "Roster is locked after qualification generation");
-  }
+  await loadUnlockedTournament(id);
 
-  const existingPlayers = await PlayerModel.find({ _id: { $in: playerIds } }).select({ _id: 1 });
-  if (existingPlayers.length !== playerIds.length) {
+  const players = await PlayerModel.find({ _id: { $in: playerIds } }).select({
+    firstName: 1,
+    lastName: 1,
+    jerseyNumber: 1
+  });
+  if (players.length !== playerIds.length) {
     throw new ApiError(400, "One or more players do not exist");
   }
+
   const existing = await RegistrationModel.find({ tournamentId: id, playerId: { $in: playerIds } });
   const existingPlayerIds = new Set(existing.map((registration) => String(registration.playerId)));
   const created = await RegistrationModel.create(
-    playerIds
-      .filter((playerId) => !existingPlayerIds.has(playerId))
-      .map((playerId) => ({ tournamentId: id, playerId }))
+    players
+      .filter((player) => !existingPlayerIds.has(String(player._id)))
+      .map((player) => {
+        // A registration is only valid with a jersey number or a named player, so
+        // a nameless player's number is carried over instead of failing to save.
+        const hasName = Boolean(player.firstName || player.lastName);
+        if (!hasName && player.jerseyNumber === undefined) {
+          throw new ApiError(
+            400,
+            `Player ${String(player._id)} needs a name or a jersey number before registration`
+          );
+        }
+        return {
+          tournamentId: id,
+          playerId: player._id,
+          ...(!hasName && { jerseyNumber: player.jerseyNumber })
+        };
+      })
   );
-  res.status(201).json({ registrations: [...existing, ...created] });
+
+  res.status(201).json({
+    registrations: [...existing, ...created],
+    summary: { created: created.length, alreadyRegistered: existing.length }
+  });
+};
+
+export const bulkUnregisterPlayers = async (req: Request, res: Response): Promise<void> => {
+  const { id } = idParamsSchema.parse(req.params);
+  const body = bulkTournamentRegistrationsSchema.parse(req.body);
+  const playerIds = [...new Set(body.playerIds)];
+
+  await loadUnlockedTournament(id);
+
+  const registrations = await RegistrationModel.find({
+    tournamentId: id,
+    playerId: { $in: playerIds }
+  }).select({ _id: 1 });
+  const registrationIds = registrations.map((registration) => registration._id);
+
+  const referencedByMatch = await MatchModel.exists({
+    "teams.players.registrationId": { $in: registrationIds }
+  });
+  if (referencedByMatch) {
+    throw new ApiError(409, "Registrations cannot be removed while matches reference them");
+  }
+
+  const { deletedCount } = await RegistrationModel.deleteMany({ _id: { $in: registrationIds } });
+
+  res.status(200).json({ message: "Registrations removed", summary: { deleted: deletedCount } });
+};
+
+export const bulkUpdateAttendance = async (req: Request, res: Response): Promise<void> => {
+  const { id } = idParamsSchema.parse(req.params);
+  const { attendanceStatus, registrationIds } = bulkAttendanceSchema.parse(req.body);
+
+  await loadUnlockedTournament(id);
+
+  const { modifiedCount } = await RegistrationModel.updateMany(
+    {
+      tournamentId: id,
+      ...(registrationIds && { _id: { $in: registrationIds } })
+    },
+    {
+      $set: {
+        attendanceStatus,
+        checkedInAt: attendanceStatus === "checked_in" ? new Date() : null
+      }
+    }
+  );
+
+  res.status(200).json({ message: "Attendance updated", summary: { modified: modifiedCount } });
 };
 
 export const previewTournamentQualification = async (req: Request, res: Response): Promise<void> => {

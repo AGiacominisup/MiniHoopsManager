@@ -54,11 +54,11 @@ export const openApiSpec = {
       },
       CreateTournamentRequest: {
         type: "object",
-        required: ["name", "startDate", "endDate"],
+        required: ["name"],
         properties: {
           name: { type: "string", example: "Spring Tournament" },
-          startDate: { type: "string", format: "date-time", example: "2026-09-10T09:00:00.000Z" },
-          endDate: { type: "string", format: "date-time", example: "2026-09-12T18:00:00.000Z" },
+          startDate: { type: "string", format: "date-time", nullable: true, example: "2026-09-10T09:00:00.000Z" },
+          endDate: { type: "string", format: "date-time", nullable: true, example: "2026-09-12T18:00:00.000Z" },
           category: { type: "string", example: "U12" },
           winPoints: { type: "integer", example: 10 },
           status: { type: "string", enum: ["planned", "in_progress", "completed"], example: "planned" },
@@ -90,8 +90,8 @@ export const openApiSpec = {
         properties: {
           _id: { type: "string" },
           name: { type: "string" },
-          startDate: { type: "string", format: "date-time" },
-          endDate: { type: "string", format: "date-time" },
+          startDate: { type: "string", format: "date-time", nullable: true },
+          endDate: { type: "string", format: "date-time", nullable: true },
           category: { type: "string" },
           winPoints: { type: "integer" },
           status: { type: "string", enum: ["planned", "in_progress", "completed"] },
@@ -355,12 +355,33 @@ export const openApiSpec = {
         responses: { "200": { description: "Tournament setup, attendance counts and blockers" } }
       }
     },
+    "/api/tournaments/{id}/available-players": {
+      get: {
+        tags: ["Tournaments"], summary: "List players not yet registered for the tournament", security: [{ bearerAuth: [] }],
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+        responses: { "200": { description: "Selectable player list" }, "404": { description: "Not found" } }
+      }
+    },
     "/api/tournaments/{id}/registrations/bulk": {
+      parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
       post: {
         tags: ["Registrations"], summary: "Associate multiple players with a draft tournament", security: [{ bearerAuth: [] }],
+        requestBody: { required: true, content: { "application/json": { schema: { type: "object", required: ["playerIds"], properties: { playerIds: { type: "array", minItems: 1, maxItems: 200, items: { type: "string" } } } } } } },
+        responses: { "201": { description: "Registrations plus a created/alreadyRegistered summary" }, "400": { description: "Unknown player, or a player without name and jersey number" }, "409": { description: "Roster locked" } }
+      },
+      delete: {
+        tags: ["Registrations"], summary: "Remove multiple players from a draft tournament", security: [{ bearerAuth: [] }],
+        requestBody: { required: true, content: { "application/json": { schema: { type: "object", required: ["playerIds"], properties: { playerIds: { type: "array", minItems: 1, maxItems: 200, items: { type: "string" } } } } } } },
+        responses: { "200": { description: "Deletion summary" }, "409": { description: "Roster locked or registrations referenced by matches" } }
+      }
+    },
+    "/api/tournaments/{id}/registrations/attendance": {
+      patch: {
+        tags: ["Registrations"], summary: "Check in or withdraw many players at once", security: [{ bearerAuth: [] }],
+        description: "Omit registrationIds to apply the status to every registration of the tournament.",
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
-        requestBody: { required: true, content: { "application/json": { schema: { type: "object", required: ["playerIds"], properties: { playerIds: { type: "array", items: { type: "string" } } } } } } },
-        responses: { "201": { description: "Existing and created registrations" }, "409": { description: "Roster locked" } }
+        requestBody: { required: true, content: { "application/json": { schema: { type: "object", required: ["attendanceStatus"], properties: { attendanceStatus: { type: "string", enum: ["checked_in", "withdrawn"] }, registrationIds: { type: "array", minItems: 1, maxItems: 500, items: { type: "string" } } } } } } },
+        responses: { "200": { description: "Update summary" }, "409": { description: "Roster locked" } }
       }
     },
     "/api/tournaments/{id}/qualification/preview": {
@@ -468,14 +489,15 @@ export const openApiSpec = {
         parameters: [
           { name: "tournamentId", in: "query", schema: { type: "string" } },
           { name: "phase", in: "query", schema: { type: "string", enum: ["qualification", "final"] } },
-          { name: "status", in: "query", schema: { type: "string", enum: ["scheduled", "in_progress", "completed"] } }
+          { name: "status", in: "query", schema: { type: "string", enum: ["scheduled", "queued", "ready", "in_progress", "completed"] } }
         ],
         responses: { "200": { description: "Match list" } }
       },
       post: {
-        tags: ["Matches"], summary: "Create a match", security: [{ bearerAuth: [] }],
+        tags: ["Matches"], summary: "Create a final-phase match", security: [{ bearerAuth: [] }],
+        description: "Qualification matches are produced by the tournament generator and cannot be created here.",
         requestBody: { required: true, content: { "application/json": { schema: { $ref: "#/components/schemas/Match" } } } },
-        responses: { "201": { description: "Match created" }, "400": { description: "Invalid references" } }
+        responses: { "201": { description: "Match created" }, "400": { description: "Invalid references" }, "409": { description: "Qualification phase is engine-managed" } }
       }
     },
     "/api/matches/{id}": {

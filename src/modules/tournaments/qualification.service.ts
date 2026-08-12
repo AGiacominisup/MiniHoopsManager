@@ -1,20 +1,25 @@
 import { createHash, randomUUID } from "node:crypto";
-import mongoose from "mongoose";
+import mongoose, { type ClientSession } from "mongoose";
 import { ApiError } from "../../utils/ApiError";
 import { MatchModel, type MatchDocument } from "../matches/match.model";
 import { PlayerModel } from "../players/player.model";
 import { RegistrationModel } from "../registrations/registration.model";
-import { buildQualificationPlan, type QualificationPlayer } from "./qualificationScheduler";
-import { TournamentModel, type TournamentDocument } from "./tournament.model";
+import {
+  buildQualificationPlan,
+  type QualificationPlan,
+  type QualificationPlayer
+} from "./qualificationScheduler";
+import { loadTournament, type TournamentEntity } from "./tournament.guards";
+import { TournamentModel } from "./tournament.model";
 
 interface QualificationContext {
-  tournament: mongoose.HydratedDocument<TournamentDocument>;
+  tournament: TournamentEntity;
   players: QualificationPlayer[];
   rosterFingerprint: string;
 }
 
 const buildRosterFingerprint = (
-  tournament: mongoose.HydratedDocument<TournamentDocument>,
+  tournament: TournamentEntity,
   registrationIds: string[]
 ): string => {
   const source = JSON.stringify({
@@ -33,22 +38,51 @@ const buildRosterFingerprint = (
   return createHash("sha256").update(source).digest("hex");
 };
 
-const loadQualificationContext = async (tournamentId: string): Promise<QualificationContext> => {
-  const tournament = await TournamentModel.findById(tournamentId);
-  if (!tournament) {
-    throw new ApiError(404, "Tournament not found");
+/**
+ * Single source of truth for "can this tournament be generated?", shared by the
+ * setup dashboard and the generation endpoints so the two cannot drift apart.
+ */
+export const evaluateQualificationReadiness = (
+  tournament: TournamentEntity,
+  checkedInCount: number
+): string[] => {
+  const blockers: string[] = [];
+
+  if (checkedInCount < tournament.configuration.playersPerMatch) {
+    blockers.push(
+      `At least ${tournament.configuration.playersPerMatch} players must be checked in`
+    );
+  }
+  if (!tournament.courts.some((court) => court.enabled)) {
+    blockers.push("At least one court must be enabled");
+  }
+  if (tournament.qualification.status !== "draft") {
+    blockers.push("Qualification matches have already been generated");
   }
 
-  const registrations = await RegistrationModel.find({
+  return blockers;
+};
+
+const loadQualificationContext = async (
+  tournamentId: string,
+  session?: ClientSession
+): Promise<QualificationContext> => {
+  const tournament = await loadTournament(tournamentId, session);
+
+  const registrationQuery = RegistrationModel.find({
     tournamentId,
     attendanceStatus: "checked_in"
   }).sort({ _id: 1 });
-  if (registrations.length < tournament.configuration.playersPerMatch) {
-    throw new ApiError(409, "At least 6 checked-in players are required");
+  const registrations = await (session ? registrationQuery.session(session) : registrationQuery);
+
+  const blockers = evaluateQualificationReadiness(tournament, registrations.length);
+  if (blockers.length > 0) {
+    throw new ApiError(409, blockers.join("; "));
   }
 
   const playerIds = registrations.map((registration) => registration.playerId);
-  const playerDocuments = await PlayerModel.find({ _id: { $in: playerIds } });
+  const playerQuery = PlayerModel.find({ _id: { $in: playerIds } });
+  const playerDocuments = await (session ? playerQuery.session(session) : playerQuery);
   const playersById = new Map(playerDocuments.map((player) => [String(player._id), player]));
   const players = registrations.map((registration): QualificationPlayer => {
     const player = playersById.get(String(registration.playerId));
@@ -73,18 +107,34 @@ const loadQualificationContext = async (tournamentId: string): Promise<Qualifica
   };
 };
 
+/**
+ * The scheduler is a pure module and signals invalid input with plain Errors,
+ * which the global handler would surface as a 500. These are client-correctable
+ * states, so they are translated into conflicts.
+ */
+const buildPlanOrFail = (context: QualificationContext, seed: string): QualificationPlan => {
+  try {
+    return buildQualificationPlan(
+      context.players,
+      context.tournament.configuration.qualificationAppearancesPerPlayer,
+      seed
+    );
+  } catch (error) {
+    if (error instanceof ApiError) {
+      throw error;
+    }
+    throw new ApiError(
+      409,
+      error instanceof Error ? error.message : "Qualification plan could not be generated"
+    );
+  }
+};
+
 export const previewQualification = async (tournamentId: string, requestedSeed?: string) => {
   const context = await loadQualificationContext(tournamentId);
-  if (context.tournament.qualification.status !== "draft") {
-    throw new ApiError(409, "Qualification matches have already been generated");
-  }
-
   const seed = requestedSeed ?? randomUUID();
-  const plan = buildQualificationPlan(
-    context.players,
-    context.tournament.configuration.qualificationAppearancesPerPlayer,
-    seed
-  );
+  const plan = buildPlanOrFail(context, seed);
+
   return { ...plan, rosterFingerprint: context.rosterFingerprint };
 };
 
@@ -93,34 +143,58 @@ export const generateQualification = async (
   seed: string,
   expectedFingerprint: string
 ) => {
-  const context = await loadQualificationContext(tournamentId);
-  if (
-    context.tournament.qualification.status !== "draft" &&
-    context.tournament.qualification.seed === seed &&
-    context.tournament.qualification.rosterFingerprint === expectedFingerprint
-  ) {
+  const tournament = await loadTournament(tournamentId);
+
+  // An already-generated plan is answered before any roster validation, so a
+  // retry of a committed generation cannot fail on roster changes that happened
+  // after it succeeded.
+  if (tournament.qualification.status !== "draft") {
+    if (
+      tournament.qualification.seed !== seed ||
+      tournament.qualification.rosterFingerprint !== expectedFingerprint
+    ) {
+      throw new ApiError(409, "A different qualification plan has already been generated");
+    }
+
     const matches = await MatchModel.find({ tournamentId, phase: "qualification" }).sort({
       queuePosition: 1
     });
-    return { tournament: context.tournament, matches, idempotent: true };
+    if (matches.length !== tournament.qualification.totalMatches) {
+      throw new ApiError(409, "Stored qualification matches do not match the generated plan");
+    }
+
+    return { tournament, matches, idempotent: true };
   }
-  if (context.tournament.qualification.status !== "draft") {
-    throw new ApiError(409, "A different qualification plan has already been generated");
-  }
+
+  const context = await loadQualificationContext(tournamentId);
   if (context.rosterFingerprint !== expectedFingerprint) {
     throw new ApiError(409, "Roster or tournament configuration changed after preview");
   }
 
-  const plan = buildQualificationPlan(
-    context.players,
-    context.tournament.configuration.qualificationAppearancesPerPlayer,
-    seed
-  );
   const session = await mongoose.startSession();
   try {
     let createdMatches: mongoose.HydratedDocument<MatchDocument>[] = [];
-    let idempotent = false;
+    let generatedTournament = context.tournament;
+
     await session.withTransaction(async () => {
+      // The roster is re-read and re-fingerprinted inside the transaction: the
+      // roster lock only engages once qualification leaves "draft", so the read
+      // performed before the transaction is not authoritative.
+      const freshContext = await loadQualificationContext(tournamentId, session);
+      if (freshContext.rosterFingerprint !== expectedFingerprint) {
+        throw new ApiError(409, "Roster or tournament configuration changed during generation");
+      }
+
+      const plan = buildPlanOrFail(freshContext, seed);
+
+      const existingMatches = await MatchModel.exists({
+        tournamentId,
+        phase: "qualification"
+      }).session(session);
+      if (existingMatches) {
+        throw new ApiError(409, "Qualification matches already exist for this tournament");
+      }
+
       const freshTournament = await TournamentModel.findOneAndUpdate(
         { _id: tournamentId, "qualification.status": "draft" },
         {
@@ -135,27 +209,7 @@ export const generateQualification = async (
         { new: true, runValidators: true, session }
       );
       if (!freshTournament) {
-        const existingTournament = await TournamentModel.findById(tournamentId).session(session);
-        if (
-          existingTournament?.qualification.seed === seed &&
-          existingTournament.qualification.rosterFingerprint === expectedFingerprint
-        ) {
-          createdMatches = await MatchModel.find({ tournamentId, phase: "qualification" })
-            .sort({ queuePosition: 1 })
-            .session(session);
-          context.tournament = existingTournament;
-          idempotent = true;
-          return;
-        }
         throw new ApiError(409, "Tournament qualification is no longer in draft state");
-      }
-
-      const existingMatches = await MatchModel.exists({
-        tournamentId,
-        phase: "qualification"
-      }).session(session);
-      if (existingMatches) {
-        throw new ApiError(409, "Qualification matches already exist for this tournament");
       }
 
       createdMatches = await MatchModel.create(
@@ -175,9 +229,10 @@ export const generateQualification = async (
         { session }
       );
 
-      context.tournament = freshTournament;
+      generatedTournament = freshTournament;
     });
-    return { tournament: context.tournament, matches: createdMatches, idempotent };
+
+    return { tournament: generatedTournament, matches: createdMatches, idempotent: false };
   } finally {
     await session.endSession();
   }
@@ -187,10 +242,7 @@ export const cancelQualification = async (tournamentId: string): Promise<void> =
   const session = await mongoose.startSession();
   try {
     await session.withTransaction(async () => {
-      const tournament = await TournamentModel.findById(tournamentId).session(session);
-      if (!tournament) {
-        throw new ApiError(404, "Tournament not found");
-      }
+      const tournament = await loadTournament(tournamentId, session);
       const startedMatch = await MatchModel.exists({
         tournamentId,
         phase: "qualification",
@@ -199,9 +251,11 @@ export const cancelQualification = async (tournamentId: string): Promise<void> =
       if (startedMatch) {
         throw new ApiError(409, "Qualification cannot be cancelled after a match is assigned");
       }
-      await MatchModel.deleteMany({ tournamentId, phase: "qualification", status: "queued" }).session(
-        session
-      );
+
+      // Every qualification match is removed, not only the queued ones: leaving
+      // one behind would block regeneration forever while cancel reports success.
+      await MatchModel.deleteMany({ tournamentId, phase: "qualification" }).session(session);
+
       Object.assign(tournament.qualification, { status: "draft", totalMatches: 0 });
       tournament.qualification.seed = undefined;
       tournament.qualification.rosterFingerprint = undefined;
