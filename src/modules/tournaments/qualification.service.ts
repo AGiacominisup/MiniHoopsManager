@@ -169,7 +169,10 @@ const persistQualificationPlan = async (
     throw new ApiError(409, "The tournament is no longer in draft state");
   }
 
-  const matches = await MatchModel.create(
+  // insertMany rather than create: the whole queue goes in with a single bulk
+  // write, and create() refuses more than one document inside a session unless
+  // it is told to insert them one by one.
+  const matches = await MatchModel.insertMany(
     plan.matches.map((match) => ({
       tournamentId,
       courtId: null,
@@ -183,7 +186,7 @@ const persistQualificationPlan = async (
       generationSeed: seed,
       rosterFingerprint
     })),
-    { session }
+    { session, ordered: true }
   );
 
   return { tournament, matches };
