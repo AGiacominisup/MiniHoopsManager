@@ -149,7 +149,14 @@ export const openApiSpec = {
           lastName: { type: "string" },
           jerseyNumber: { type: "integer", minimum: 0 },
           birthDate: { type: "string", format: "date-time" },
-          guardianContact: { type: "string" }
+          guardianContact: { type: "string" },
+          skillRating: {
+            type: "integer",
+            minimum: 0,
+            maximum: 10,
+            description:
+              "Perceived strength, used to balance generated teams. Treated as 5 when absent."
+          }
         }
       },
       Registration: {
@@ -160,6 +167,13 @@ export const openApiSpec = {
           tournamentId: { type: "string" },
           playerId: { type: "string" },
           jerseyNumber: { type: "integer", minimum: 0 },
+          skillRating: {
+            type: "integer",
+            minimum: 0,
+            maximum: 10,
+            description:
+              "Snapshot of the player's rating taken at registration, and the per-tournament override."
+          },
           rankingPoints: { type: "integer", minimum: 0 },
           matchesPlayed: { type: "integer", minimum: 0 },
           wins: { type: "integer", minimum: 0 },
@@ -203,7 +217,8 @@ export const openApiSpec = {
                     properties: {
                       registrationId: { type: "string" },
                       jerseyNumber: { type: "integer", minimum: 0 },
-                      name: { type: "string" }
+                      name: { type: "string" },
+                      skillRating: { type: "integer", minimum: 0, maximum: 10 }
                     }
                   }
                 }
@@ -399,6 +414,7 @@ export const openApiSpec = {
     "/api/tournaments/{id}/qualification/preview": {
       post: {
         tags: ["Tournaments"], summary: "Preview deterministic 3vs3 qualification matches", security: [{ bearerAuth: [] }],
+        description: "Persists nothing. The metrics report appearance fairness (extraAppearances, maxAppearanceDifference), combination variety (maxTeammatePairCount, maxOpponentPairCount) and team balance (maxSkillDifference, averageSkillDifference, matchesOverSkillTolerance), where a skill difference is the gap between the two teams' summed skill ratings. The roster fingerprint covers the skill ratings, so editing one invalidates the preview.",
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
         requestBody: { content: { "application/json": { schema: { type: "object", properties: { seed: { type: "string" } } } } } },
         responses: { "200": { description: "Qualification plan, metrics, seed and roster fingerprint" }, "409": { description: "Setup not ready" } }

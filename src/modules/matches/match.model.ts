@@ -8,6 +8,7 @@ export interface MatchPlayerSnapshot {
   registrationId: Schema.Types.ObjectId;
   jerseyNumber?: number;
   name?: string;
+  skillRating?: number;
 }
 
 export interface MatchTeam {
@@ -37,7 +38,8 @@ const matchPlayerSnapshotSchema = new Schema<MatchPlayerSnapshot>(
   {
     registrationId: { type: Schema.Types.ObjectId, ref: "Registration", required: true },
     jerseyNumber: { type: Number, min: 0 },
-    name: { type: String, trim: true }
+    name: { type: String, trim: true },
+    skillRating: { type: Number, min: 0, max: 10 }
   },
   { _id: false }
 );

@@ -7,6 +7,7 @@ export interface RegistrationDocument {
   tournamentId: Schema.Types.ObjectId;
   playerId: Schema.Types.ObjectId;
   jerseyNumber?: number;
+  skillRating?: number;
   rankingPoints: number;
   matchesPlayed: number;
   wins: number;
@@ -22,6 +23,10 @@ const registrationSchema = new Schema<RegistrationDocument>(
     tournamentId: { type: Schema.Types.ObjectId, ref: "Tournament", required: true },
     playerId: { type: Schema.Types.ObjectId, ref: "Player", required: true },
     jerseyNumber: { type: Number, min: 0 },
+    // Snapshot of Player.skillRating taken at registration time, and the
+    // per-tournament override. Left unset when the player has no rating, so an
+    // absent value means "fall back to the player record".
+    skillRating: { type: Number, min: 0, max: 10 },
     rankingPoints: { type: Number, default: 0 },
     matchesPlayed: { type: Number, default: 0 },
     wins: { type: Number, default: 0 },

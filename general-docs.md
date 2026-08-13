@@ -55,9 +55,9 @@ The current backend already supports the main entities required for the first ve
 
 **Registration** is the central entity of the participation model. A Player is a global,
 tournament-independent record; a Registration links that Player to one Tournament and carries
-everything that is specific to that participation: attendance status, jersey number, and the
-running tournament statistics (`rankingPoints`, `matchesPlayed`, `wins`, `pointsScored`,
-`pointsAllowed`, `finalGroupId`).
+everything that is specific to that participation: attendance status, jersey number, the skill
+rating snapshot (§12.1), and the running tournament statistics (`rankingPoints`, `matchesPlayed`,
+`wins`, `pointsScored`, `pointsAllowed`, `finalGroupId`).
 
 The scheduling engine works exclusively in **registration-ID space**, never in player-ID space.
 
@@ -373,7 +373,7 @@ Examples:
 
 1. Avoid repeating teammates.
 2. Avoid repeating opponents.
-3. Keep games balanced.
+3. Keep games balanced, using the player skill rating described in §12.1.
 4. Prefer players with lower ranking for additional games.
 5. Minimize differences in number of games played.
 6. Maximize diversity of combinations.
@@ -411,21 +411,82 @@ Update player history
 
 Each candidate game can receive a score based on multiple factors.
 
-Example:
+Conceptually:
 
 ```text
 Candidate Score =
 
 + Team Diversity
 + Opponent Diversity
-+ Ranking Balance
++ Skill Balance
 + Game Distribution Balance
 - Repeated Teammate Penalty
 - Repeated Opponent Penalty
 - Unequal Game Count Penalty
 ```
 
-The exact weighting of these factors should be configurable.
+## 11.1 The implemented cost vector
+
+The engine does not use a weighted sum. Candidates are compared with a
+**lexicographic cost vector of integers**, lower is better, which makes the
+priority between factors explicit and removes the need to tune weights.
+
+Every game is built in two steps.
+
+**Step 1 — choose the six players.** Candidates are ranked by remaining
+appearances owed (descending), then by whether they played the previous game
+(players who did are deprioritized), then by a seeded random value. Appearance
+equality is a hard constraint, so only players sharing the exact same
+`(remaining appearances, played previous game)` key as the last player to make the
+cut are interchangeable. Among those, the engine enumerates the possible sextets
+and prefers the ones that can be split fairly at all, then the ones with the least
+teammate history:
+
+```text
+[ max(0, best achievable skill difference - SKILL_TOLERANCE),
+  worst repeated-teammate pair count inside the group,
+  total repeated-teammate weight inside the group ]
+```
+
+This exists because a group of three strong and three weak players has no fair
+partition, no matter how it is split.
+
+**Step 2 — split them into two teams.** All 10 distinct 3-vs-3 partitions are
+enumerated and scored:
+
+```text
+[ max(0, skill difference - SKILL_TOLERANCE),   <- imbalance beyond tolerance
+  worst repeated-teammate pair count,
+  total repeated-teammate weight,
+  worst repeated-opponent pair count,
+  total repeated-opponent weight,
+  skill difference ]                            <- final tie-break
+```
+
+Remaining ties are resolved by a seeded random pick, so the plan is reproducible
+from its seed.
+
+## 11.2 The skill tolerance band
+
+`SKILL_TOLERANCE` is the difference between the two team skill sums treated as
+irrelevant. It is currently **4 points on the sum of a trio**, roughly 1.3 rating
+points per player.
+
+The band is what keeps balance from cannibalizing variety. Inside it the first
+component is `0` for every candidate, so the choice is decided entirely by the
+teammate and opponent history, exactly as it was before skill ratings existed.
+Outside it, balance dominates and unfair splits are discarded before variety is
+even considered.
+
+> **Implementation status:** active. The value is tuned against rosters of 6 to 40
+> players and 1 to 6 appearances per player. With no balancing the worst single
+> game reaches a 24-point imbalance; with the band it stays within 5, while the
+> worst repeated-teammate count grows by at most one, and only on rosters whose
+> ratings are spread uniformly across the whole 0–10 range. On two-tier and
+> realistically clustered rosters the balance is reached at no variety cost at all.
+> A tighter band (2) balances marginally better but doubles teammate repetition.
+> A looser one (5) stops correcting two-tier rosters, where every possible
+> imbalance is a multiple of the gap between the tiers.
 
 ---
 
@@ -462,6 +523,50 @@ Possible factors include:
 - other tournament-specific metrics.
 
 The ranking system should be implemented independently from the game generation algorithm so that it can evolve without requiring a rewrite of the scheduling engine.
+
+## 12.1 Player Skill Rating
+
+Distinct from the ranking above, a player carries an optional **skill rating**: an
+integer from `0` to `10` expressing a rough, human judgement of how strong that
+player is. It is a **permanent attribute of the global player**, set by staff, and
+it is the only input the engine has about relative strength.
+
+The two values must not be confused:
+
+| | Skill rating | Tournament ranking |
+| --- | --- | --- |
+| Lives on | `Player` | `Registration` |
+| Scope | Permanent, across tournaments | One tournament |
+| Set by | Staff, manually | Computed from results |
+| Read by | Team generation, before the tournament starts | Reporting, and Phase 2 allocation |
+| Value at generation time | Meaningful | Always zero |
+
+This is why balance uses the skill rating and not `rankingPoints`: at generation
+time every player still has zero ranking points, so the ranking carries no signal.
+
+**Default.** The rating is optional. A player without one is treated as **5**, the
+midpoint, so a partially rated roster stays usable and a roster with no ratings at
+all generates exactly the same schedule it did before the feature existed.
+
+**Snapshot and override.** When a player is registered for a tournament, the rating
+is copied onto the registration. The registration value is what the engine reads,
+which means:
+
+- retuning a player's rating later does not silently alter tournaments they are
+  already registered for;
+- the registration value can be edited on its own while the roster is unlocked,
+  acting as a per-tournament override (a player who is strong for their age group
+  may be average in an older one);
+- a registration with no snapshot falls back to the player's current rating.
+
+The resolved rating is also denormalized into the player snapshot of every
+generated game, alongside the jersey number and name, so a game carries the
+strength it was balanced on.
+
+**Roster identity.** Skill ratings are part of the roster fingerprint used by the
+preview/generate handshake (§16). Editing a rating between preview and generate
+invalidates the preview, exactly as adding or removing a player does, because it
+would otherwise produce a schedule different from the one that was approved.
 
 ---
 
@@ -612,7 +717,7 @@ POST /tournaments/{tournamentId}/qualification/generate
 
 `preview` is pure: it computes a plan and persists nothing. It returns the plan, its quality
 metrics, the `seed` used, and a `rosterFingerprint` — a SHA-256 hash of the sorted registration IDs
-plus the tournament configuration.
+**with their resolved skill ratings**, plus the tournament configuration.
 
 `generate` takes that `seed` and `rosterFingerprint` back. The seed makes the plan reproducible;
 the fingerprint makes the commit safe, because it fails if the roster or configuration changed
@@ -694,6 +799,7 @@ The frontend will need to display at least:
 - games played;
 - wins/losses;
 - ranking;
+- skill rating (§12.1), editable while the roster is unlocked;
 - points;
 - teammates;
 - opponents.
@@ -746,7 +852,8 @@ The engine should be designed so that additional constraints can be introduced p
   generation time;
 - no player overlap — enforced at assignment time, by construction;
 - seeded, reproducible randomization;
-- teammate **and** opponent diversity, scored with a lexicographic cost vector.
+- teammate **and** opponent diversity, scored with a lexicographic cost vector;
+- team balance from the player skill rating, inside a tolerance band (§11.2, §12.1).
 
 ### Phase 2
 
@@ -754,9 +861,8 @@ Add:
 
 - ranking;
 - ranking-based additional games;
-- opponent diversity;
-- team balance;
-- advanced scoring function.
+- rating updates driven by results;
+- advanced scoring function with configurable weights.
 
 ### Phase 3
 

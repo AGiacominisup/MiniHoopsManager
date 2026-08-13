@@ -13,14 +13,15 @@ import {
   updateRegistrationSchema
 } from "./registration.validation";
 
+/** Returns the referenced player so callers can snapshot fields from it. */
 const validateRegistrationReferences = async (
   tournamentId: string,
   playerId: string,
   finalGroupId?: string | null
-): Promise<void> => {
+): Promise<{ skillRating?: number }> => {
   const [tournament, player] = await Promise.all([
     TournamentModel.findById(tournamentId),
-    PlayerModel.exists({ _id: playerId })
+    PlayerModel.findById(playerId).select({ skillRating: 1 }).lean()
   ]);
 
   if (!tournament) {
@@ -38,11 +39,17 @@ const validateRegistrationReferences = async (
   ) {
     throw new ApiError(400, "finalGroupId does not belong to the tournament");
   }
+
+  return player;
 };
 
 export const createRegistration = async (req: Request, res: Response): Promise<void> => {
   const body = createRegistrationSchema.parse(req.body);
-  await validateRegistrationReferences(body.tournamentId, body.playerId, body.finalGroupId);
+  const player = await validateRegistrationReferences(
+    body.tournamentId,
+    body.playerId,
+    body.finalGroupId
+  );
 
   const existing = await RegistrationModel.exists({
     tournamentId: body.tournamentId,
@@ -52,7 +59,13 @@ export const createRegistration = async (req: Request, res: Response): Promise<v
     throw new ApiError(409, "Player is already registered for this tournament");
   }
 
-  const registration = await RegistrationModel.create(body);
+  // The player's rating is snapshotted unless the caller overrides it for this
+  // tournament, so later edits to the player record leave this roster untouched.
+  const skillRating = body.skillRating ?? player.skillRating;
+  const registration = await RegistrationModel.create({
+    ...body,
+    ...(skillRating !== undefined && { skillRating })
+  });
   res.status(201).json({ message: "Registration created", registration });
 };
 

@@ -2,11 +2,18 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { buildQualificationPlan, type QualificationPlayer } from "./qualificationScheduler";
 
-const players = (count: number): QualificationPlayer[] =>
+const players = (
+  count: number,
+  skillRating?: (index: number) => number
+): QualificationPlayer[] =>
   Array.from({ length: count }, (_, index) => ({
     registrationId: `registration-${index + 1}`,
-    jerseyNumber: index + 1
+    jerseyNumber: index + 1,
+    ...(skillRating && { skillRating: skillRating(index) })
   }));
+
+const teamSkill = (team: { players: QualificationPlayer[] }): number =>
+  team.players.reduce((sum, player) => sum + (player.skillRating ?? 5), 0);
 
 test("builds the same plan for the same seed", () => {
   const first = buildQualificationPlan(players(12), 4, "spring-2026");
@@ -48,7 +55,13 @@ test("balances extra appearances when requested slots are not divisible by six",
 test("produces a valid plan across realistic roster and appearance sizes", () => {
   for (let count = 6; count <= 40; count += 1) {
     for (let appearances = 1; appearances <= 6; appearances += 1) {
-      const plan = buildQualificationPlan(players(count), appearances, `sweep-${count}-${appearances}`);
+      // Ratings spread over the whole 0-10 range: the appearance guarantees below
+      // are the proof that skill-aware group selection never trades away fairness.
+      const plan = buildQualificationPlan(
+        players(count, (index) => index % 11),
+        appearances,
+        `sweep-${count}-${appearances}`
+      );
       const targetValues = Object.values(plan.targets);
 
       assert.ok(plan.metrics.maxAppearanceDifference <= 1);
@@ -71,4 +84,75 @@ test("rejects fewer than six players and duplicate registrations", () => {
   const duplicatePlayers = players(6);
   duplicatePlayers[5].registrationId = duplicatePlayers[0].registrationId;
   assert.throws(() => buildQualificationPlan(duplicatePlayers, 3, "duplicate"), /unique/);
+});
+
+test("rejects skill ratings outside the 0 to 10 range", () => {
+  assert.throws(
+    () => buildQualificationPlan(players(6, (index) => (index === 3 ? 11 : 5)), 2, "too-high"),
+    /between 0 and 10/
+  );
+  assert.throws(
+    () => buildQualificationPlan(players(6, (index) => (index === 0 ? -1 : 5)), 2, "too-low"),
+    /between 0 and 10/
+  );
+});
+
+test("treats players without a skill rating as the average", () => {
+  const unrated = buildQualificationPlan(players(12), 4, "unrated");
+  const allAverage = buildQualificationPlan(players(12, () => 5), 4, "unrated");
+
+  assert.equal(unrated.metrics.maxSkillDifference, 0);
+  assert.equal(unrated.metrics.matchesOverSkillTolerance, 0);
+  assert.deepEqual(
+    unrated.matches.map((match) =>
+      match.teams.map((team) => team.players.map((player) => player.registrationId))
+    ),
+    allAverage.matches.map((match) =>
+      match.teams.map((team) => team.players.map((player) => player.registrationId))
+    )
+  );
+});
+
+test("splits a polarised group as evenly as the ratings allow", () => {
+  // Three 10s and three 0s: the only possible trios are 20 vs 10, never better.
+  const plan = buildQualificationPlan(players(6, (index) => (index < 3 ? 10 : 0)), 4, "polarised");
+
+  assert.equal(plan.metrics.maxSkillDifference, 10);
+  for (const match of plan.matches) {
+    assert.equal(Math.abs(teamSkill(match.teams[0]) - teamSkill(match.teams[1])), 10);
+  }
+});
+
+test("balances a two-tier roster exactly", () => {
+  // The case the rating exists for: half the roster clearly stronger than the
+  // other half. Every trio can be made 8+3+3 against 8+8+3, so the engine should
+  // reach a perfect balance and pay nothing in teammate variety.
+  const plan = buildQualificationPlan(
+    players(12, (index) => (index % 2 === 0 ? 8 : 3)),
+    4,
+    "tiered-roster"
+  );
+
+  assert.equal(plan.metrics.maxSkillDifference, 0);
+  assert.equal(plan.metrics.matchesOverSkillTolerance, 0);
+  assert.equal(plan.metrics.maxTeammatePairCount, 2);
+  for (const match of plan.matches) {
+    assert.equal(teamSkill(match.teams[0]), teamSkill(match.teams[1]));
+  }
+});
+
+test("keeps matches within tolerance on a fully spread roster", () => {
+  // Ratings 0 to 10 with no clustering: the hardest input, since every group of
+  // six contains extremes. Balancing costs some teammate variety here, and this
+  // test pins how much.
+  const rated = buildQualificationPlan(players(12, (index) => index % 11), 4, "spread-roster");
+  const unrated = buildQualificationPlan(players(12), 4, "spread-roster");
+
+  assert.equal(rated.metrics.matchesOverSkillTolerance, 0);
+  assert.ok(rated.metrics.maxSkillDifference <= 4);
+  assert.ok(rated.metrics.maxTeammatePairCount <= unrated.metrics.maxTeammatePairCount + 1);
+
+  for (const match of rated.matches) {
+    assert.ok(Math.abs(teamSkill(match.teams[0]) - teamSkill(match.teams[1])) <= 4);
+  }
 });

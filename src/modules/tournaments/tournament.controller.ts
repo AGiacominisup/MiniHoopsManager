@@ -148,7 +148,8 @@ export const bulkRegisterPlayers = async (req: Request, res: Response): Promise<
   const players = await PlayerModel.find({ _id: { $in: playerIds } }).select({
     firstName: 1,
     lastName: 1,
-    jerseyNumber: 1
+    jerseyNumber: 1,
+    skillRating: 1
   });
   if (players.length !== playerIds.length) {
     throw new ApiError(400, "One or more players do not exist");
@@ -172,7 +173,11 @@ export const bulkRegisterPlayers = async (req: Request, res: Response): Promise<
         return {
           tournamentId: id,
           playerId: player._id,
-          ...(!hasName && { jerseyNumber: player.jerseyNumber })
+          ...(!hasName && { jerseyNumber: player.jerseyNumber }),
+          // Unlike the jersey number, the rating is always snapshotted: it freezes
+          // the player's strength for this tournament and can then be overridden
+          // per tournament without touching the player record.
+          ...(player.skillRating !== undefined && { skillRating: player.skillRating })
         };
       })
   );

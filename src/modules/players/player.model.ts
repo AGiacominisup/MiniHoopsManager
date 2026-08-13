@@ -6,6 +6,7 @@ export interface PlayerDocument {
   jerseyNumber?: number;
   birthDate?: Date;
   guardianContact?: string;
+  skillRating?: number;
 }
 
 const playerSchema = new Schema<PlayerDocument>(
@@ -14,7 +15,8 @@ const playerSchema = new Schema<PlayerDocument>(
     lastName: { type: String, trim: true },
     jerseyNumber: { type: Number, min: 0 },
     birthDate: { type: Date },
-    guardianContact: { type: String, trim: true }
+    guardianContact: { type: String, trim: true },
+    skillRating: { type: Number, min: 0, max: 10 }
   },
   {
     timestamps: true

@@ -5,6 +5,7 @@ const registrationFields = {
   tournamentId: objectIdSchema,
   playerId: objectIdSchema,
   jerseyNumber: z.number().int().nonnegative().optional(),
+  skillRating: z.number().int().min(0).max(10).optional(),
   rankingPoints: z.number().int().nonnegative().optional(),
   matchesPlayed: z.number().int().nonnegative().optional(),
   wins: z.number().int().nonnegative().optional(),

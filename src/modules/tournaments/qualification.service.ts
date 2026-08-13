@@ -20,11 +20,16 @@ interface QualificationContext {
 
 const buildRosterFingerprint = (
   tournament: TournamentEntity,
-  registrationIds: string[]
+  players: QualificationPlayer[]
 ): string => {
   const source = JSON.stringify({
     tournamentId: String(tournament._id),
-    registrationIds: [...registrationIds].sort(),
+    // Skill ratings are part of the roster identity: they change the generated
+    // plan, so editing one between preview and generate must invalidate the
+    // preview just like adding or removing a player does.
+    roster: players
+      .map((player) => `${player.registrationId}:${player.skillRating ?? ""}`)
+      .sort(),
     configuration: {
       gameFormat: tournament.configuration.gameFormat,
       competitionFormat: tournament.configuration.competitionFormat,
@@ -90,20 +95,23 @@ const loadQualificationContext = async (
     if (registration.jerseyNumber === undefined && !name) {
       throw new ApiError(409, `Registration ${String(registration._id)} has no display identity`);
     }
+    // The registration snapshot wins, so a per-tournament override sticks. Falling
+    // back to the player record keeps registrations created before skill ratings
+    // existed correct without a migration. Absent on both sides, the scheduler
+    // treats the player as average.
+    const skillRating = registration.skillRating ?? player?.skillRating;
     return {
       registrationId: String(registration._id),
       ...(registration.jerseyNumber !== undefined && { jerseyNumber: registration.jerseyNumber }),
-      ...(name && { name })
+      ...(name && { name }),
+      ...(skillRating !== undefined && { skillRating })
     };
   });
 
   return {
     tournament,
     players,
-    rosterFingerprint: buildRosterFingerprint(
-      tournament,
-      registrations.map((registration) => String(registration._id))
-    )
+    rosterFingerprint: buildRosterFingerprint(tournament, players)
   };
 };
 

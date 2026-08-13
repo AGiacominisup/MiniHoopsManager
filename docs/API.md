@@ -159,6 +159,28 @@ the schedule should be inspected before it is committed:
 Unlike `/start`, this path uses only players who are already `checked_in`. It moves the tournament
 to `qualification` all the same.
 
+The `metrics` returned by `preview` describe the quality of the draw:
+
+```ts
+export interface QualificationMetrics {
+  matches: number;
+  extraAppearances: number;          // slots handed out above the requested amount
+  maxAppearanceDifference: number;   // never above 1
+  maxTeammatePairCount: number;      // worst number of times two players shared a team
+  maxOpponentPairCount: number;      // worst number of times two players faced each other
+  maxSkillDifference: number;        // worst team-strength gap of a single match
+  averageSkillDifference: number;    // mean team-strength gap across the plan
+  matchesOverSkillTolerance: number; // matches the balancer could not bring within tolerance
+}
+```
+
+Team strength is the sum of the three `skillRating` values, so a gap is measured on a 0-30 scale.
+`matchesOverSkillTolerance` above zero means the roster itself cannot be split fairly — usually a
+handful of players far stronger than the rest — not that the generator failed.
+
+A rating change between `preview` and `generate` invalidates the `rosterFingerprint`, because it
+would produce a different plan from the one that was reviewed.
+
 The plan can be cancelled only before any match is assigned to a court; cancelling removes every
 qualification match and returns the tournament to `draft`, reopening the roster.
 
@@ -248,6 +270,7 @@ export interface Player {
   jerseyNumber?: number;
   birthDate?: string;
   guardianContact?: string;
+  skillRating?: number; // 0-10, perceived strength; used to balance generated teams
   createdAt: string;
   updatedAt: string;
 }
@@ -269,11 +292,18 @@ Create or update payload example:
   "lastName": "Rossi",
   "jerseyNumber": 12,
   "birthDate": "2015-05-20T00:00:00.000Z",
-  "guardianContact": "+39 333 0000000"
+  "guardianContact": "+39 333 0000000",
+  "skillRating": 7
 }
 ```
 
 At least one field is required. Deletion returns `409` while registrations reference the player.
+
+`skillRating` is an optional integer from `0` to `10` expressing how strong the player is. The team
+generator uses it to keep the two teams of a match comparable. A player without a rating is treated
+as `5`, so it can be filled in gradually and a roster with no ratings at all generates exactly the
+same schedule as before. The rating is copied onto the registration when the player joins a
+tournament, so retuning it later does not alter tournaments they are already registered for.
 
 ## Registrations
 
@@ -283,6 +313,7 @@ export interface Registration {
   tournamentId: string;
   playerId: string;
   jerseyNumber?: number;
+  skillRating?: number; // snapshot of Player.skillRating, and the per-tournament override
   rankingPoints: number;
   matchesPlayed: number;
   wins: number;
@@ -311,6 +342,7 @@ Create payload:
   "tournamentId": "66b000000000000000000001",
   "playerId": "66b000000000000000000002",
   "jerseyNumber": 12,
+  "skillRating": 7,
   "finalGroupId": null
 }
 ```
@@ -319,6 +351,11 @@ Create payload:
 default to zero. A player can be registered only once per tournament. `finalGroupId`, when set,
 must belong to the selected tournament. Deletion returns `409` while a match references the
 registration.
+
+`skillRating` defaults to the player's own rating and only needs to be sent to override it for this
+tournament — useful when a player who is strong for one age group is average in another. It can be
+changed with `PATCH` while the roster is unlocked, and is read by the team generator in preference
+to the player's rating.
 
 ## Matches
 
@@ -340,6 +377,7 @@ export interface MatchPlayer {
   registrationId: string;
   jerseyNumber?: number;
   name?: string;
+  skillRating?: number; // the rating the match was balanced on
 }
 
 export interface Match {

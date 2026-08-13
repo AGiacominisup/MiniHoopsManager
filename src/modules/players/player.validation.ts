@@ -5,7 +5,8 @@ const playerFields = {
   lastName: z.string().trim().min(1).optional(),
   jerseyNumber: z.number().int().nonnegative().optional(),
   birthDate: z.string().datetime().optional(),
-  guardianContact: z.string().trim().min(1).optional()
+  guardianContact: z.string().trim().min(1).optional(),
+  skillRating: z.number().int().min(0).max(10).optional()
 };
 
 export const createPlayerSchema = z.object(playerFields).refine(
