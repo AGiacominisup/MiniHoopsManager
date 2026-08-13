@@ -206,7 +206,7 @@ Endpoints:
 | `POST` | `/tournaments` | `{ message, tournament }` |
 | `GET` | `/tournaments/:id` | `{ tournament }` |
 | `PATCH` | `/tournaments/:id` | `{ message, tournament }` |
-| `DELETE` | `/tournaments/:id` | `{ message }` |
+| `DELETE` | `/tournaments/:id` | `{ message, summary: { matches, registrations } }` |
 | `GET` | `/tournaments/:id/setup` | `{ tournament, attendance, readiness }` |
 | `POST` | `/tournaments/:id/start` | `{ message, tournament, matches, idempotent }` |
 | `GET` | `/tournaments/:id/available-players` | `{ players: Player[] }` |
@@ -230,8 +230,10 @@ Create payload:
 
 Only `name` is required. `startDate` and `endDate` are optional; when both are supplied, `endDate`
 cannot precede `startDate`. `status` is not accepted — a new tournament always starts as `draft`. A
-`PATCH` accepts any non-empty subset of the remaining fields. Deletion returns `409` while
-registrations or matches reference the tournament.
+`PATCH` accepts any non-empty subset of the remaining fields. Deletion cascades: every match and
+registration of the tournament is removed in a single transaction, and the response `summary`
+reports how many of each were deleted. Players are never deleted, only their registrations for that
+tournament.
 
 A player can only be registered if they have a name or a jersey number; a nameless player's jersey
 number is copied onto the registration automatically.

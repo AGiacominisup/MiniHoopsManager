@@ -1,4 +1,5 @@
 import type { Request, Response } from "express";
+import mongoose from "mongoose";
 import { ApiError } from "../../utils/ApiError";
 import { idParamsSchema, tournamentCourtParamsSchema } from "../../utils/validation";
 import { MatchModel } from "../matches/match.model";
@@ -80,21 +81,31 @@ export const updateTournament = async (req: Request, res: Response): Promise<voi
 
 export const deleteTournament = async (req: Request, res: Response): Promise<void> => {
   const { id } = idParamsSchema.parse(req.params);
-  const hasRelatedResources = await Promise.all([
-    RegistrationModel.exists({ tournamentId: id }),
-    MatchModel.exists({ tournamentId: id })
-  ]);
-  if (hasRelatedResources.some(Boolean)) {
-    throw new ApiError(409, "Tournament cannot be deleted while registrations or matches exist");
+  const session = await mongoose.startSession();
+
+  // Deleting a tournament cascades to everything owned by that tournament:
+  // matches and registrations. Players are shared across tournaments and are
+  // never removed, only their registrations for this tournament.
+  const summary = { matches: 0, registrations: 0 };
+  try {
+    await session.withTransaction(async () => {
+      const tournament = await TournamentModel.findById(id).session(session);
+      if (!tournament) {
+        throw new ApiError(404, "Tournament not found");
+      }
+
+      const deletedMatches = await MatchModel.deleteMany({ tournamentId: id }).session(session);
+      const deletedRegistrations = await RegistrationModel.deleteMany({ tournamentId: id }).session(session);
+      await tournament.deleteOne({ session });
+
+      summary.matches = deletedMatches.deletedCount;
+      summary.registrations = deletedRegistrations.deletedCount;
+    });
+  } finally {
+    await session.endSession();
   }
 
-  const tournament = await TournamentModel.findByIdAndDelete(id);
-
-  if (!tournament) {
-    throw new ApiError(404, "Tournament not found");
-  }
-
-  res.status(200).json({ message: "Tournament deleted" });
+  res.status(200).json({ message: "Tournament deleted", summary });
 };
 
 export const getTournamentSetup = async (req: Request, res: Response): Promise<void> => {

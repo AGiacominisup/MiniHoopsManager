@@ -346,8 +346,9 @@ export const openApiSpec = {
         responses: { "200": { description: "Tournament updated" }, "403": { description: "Forbidden" }, "404": { description: "Not found" } }
       },
       delete: {
-        tags: ["Tournaments"], summary: "Delete a tournament", security: [{ bearerAuth: [] }],
-        responses: { "200": { description: "Tournament deleted" }, "409": { description: "Related resources exist" } }
+        tags: ["Tournaments"], summary: "Delete a tournament and its related data", security: [{ bearerAuth: [] }],
+        description: "Cascades to the matches and registrations of the tournament in a single transaction. Players are never deleted.",
+        responses: { "200": { description: "Tournament deleted, with a matches/registrations summary" }, "404": { description: "Not found" } }
       }
     },
     "/api/tournaments/{id}/setup": {
