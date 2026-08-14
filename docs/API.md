@@ -369,9 +369,28 @@ individually. Use `DELETE /tournaments/:id/qualification` to discard a whole pla
 
 To read a generated schedule, filter on `status=queued`; results are ordered by `queuePosition`.
 
+### Which matches can actually be played now
+
+A player cannot be in two matches at once, so a queued match is playable only while none of its six
+players is engaged in a `ready` or `in_progress` match. `GET /matches` and `GET /matches/:id`
+therefore return an `availability` block on every **queued** match; it is absent on any other
+status, because those matches are already bound to a court, played, or manually managed.
+
+Use it to enable or disable the match in the court-assignment UI: when a court frees up, only the
+matches with `availability.playable === true` can be assigned to it. `busyRegistrationIds` lists the
+players that are blocking the match, so the UI can explain why.
+
+Availability is computed at read time and changes whenever any match starts or completes — refresh
+the list after every assignment, start, or completion.
+
 ```ts
 export type MatchPhase = "qualification" | "final";
 export type MatchStatus = "scheduled" | "queued" | "ready" | "in_progress" | "completed";
+
+export interface MatchAvailability {
+  playable: boolean;             // no player of this match is busy elsewhere
+  busyRegistrationIds: string[]; // the players blocking it, empty when playable
+}
 
 export interface MatchPlayer {
   registrationId: string;
@@ -395,6 +414,7 @@ export interface Match {
     side: "A" | "B";
     players: MatchPlayer[];
   }>;
+  availability?: MatchAvailability; // queued matches only
   createdAt: string;
   updatedAt: string;
 }
@@ -407,6 +427,37 @@ export interface Match {
 | `GET` | `/matches/:id` | `{ match }` |
 | `PATCH` | `/matches/:id` | `{ message, match }` |
 | `DELETE` | `/matches/:id` | `{ message }` |
+| `POST` | `/matches/:id/assign` | `{ message, match }` |
+| `POST` | `/matches/:id/start` | `{ message, match }` |
+| `POST` | `/matches/:id/complete` | `{ message, match, nextMatch, idempotent }` |
+
+### Assigning a match to a court
+
+```http
+POST /api/matches/:id/assign
+{ "courtId": "66b000000000000000000010" }
+```
+
+Binds a `queued` match to a free court and moves it to `ready`, meaning reserved and waiting for
+`POST /matches/:id/start`. The court must belong to the match's tournament and be enabled.
+
+The player-overlap rule is re-checked inside the transaction, so a match that looked playable in a
+stale list is refused rather than double-booking a player:
+
+| Status | Reason |
+| --- | --- |
+| `200` | Assigned. Replaying the same `courtId` on an already `ready` match returns it unchanged |
+| `404` | Match not found, or the court is not an enabled court of the tournament |
+| `409` | `Only a queued match can be assigned to a court` |
+| `409` | `Court already has an assigned match` |
+| `409` | `Match players are already busy in another match: <registrationIds>` |
+| `409` | `Match was assigned by another request` — concurrent assignment won the race |
+
+To let the backend pick instead of choosing a match, use
+`POST /tournaments/:id/courts/:courtId/assign-next`, which walks the queue in order and reserves the
+first playable match, preferring the ones with the fewest players from the match that just ended. It
+returns `{ match: null }` when nothing is currently playable. Completing a match runs the same
+selection automatically on the freed court and returns the reservation as `nextMatch`.
 
 Create payload:
 

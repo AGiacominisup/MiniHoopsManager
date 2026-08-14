@@ -55,6 +55,10 @@ export const matchQuerySchema = z.object({
     .optional()
 });
 
+export const assignMatchSchema = z.object({
+  courtId: objectIdSchema
+});
+
 export const completeMatchSchema = z
   .object({
     scoreA: z.number().int().nonnegative(),

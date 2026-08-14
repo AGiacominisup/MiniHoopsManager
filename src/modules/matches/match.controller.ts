@@ -4,8 +4,19 @@ import { idParamsSchema } from "../../utils/validation";
 import { RegistrationModel } from "../registrations/registration.model";
 import { TournamentModel } from "../tournaments/tournament.model";
 import { MatchModel } from "./match.model";
-import { completeMatchSchema, createMatchSchema, matchQuerySchema, updateMatchSchema } from "./match.validation";
-import { completeMatch, startMatch } from "./matchQueue.service";
+import {
+  assignMatchSchema,
+  completeMatchSchema,
+  createMatchSchema,
+  matchQuerySchema,
+  updateMatchSchema
+} from "./match.validation";
+import {
+  assignMatchToCourt,
+  buildAvailabilityMap,
+  completeMatch,
+  startMatch
+} from "./matchQueue.service";
 
 interface MatchReferenceTeam {
   players: Array<{ registrationId: unknown }>;
@@ -82,7 +93,13 @@ export const createMatch = async (req: Request, res: Response): Promise<void> =>
 export const listMatches = async (req: Request, res: Response): Promise<void> => {
   const query = matchQuerySchema.parse(req.query);
   const matches = await MatchModel.find(query).sort({ scheduledAt: 1, queuePosition: 1 });
-  res.status(200).json({ matches });
+  const availability = await buildAvailabilityMap(matches);
+  res.status(200).json({
+    matches: matches.map((match) => ({
+      ...match.toJSON(),
+      availability: availability.get(String(match._id))
+    }))
+  });
 };
 
 export const getMatch = async (req: Request, res: Response): Promise<void> => {
@@ -93,7 +110,10 @@ export const getMatch = async (req: Request, res: Response): Promise<void> => {
     throw new ApiError(404, "Match not found");
   }
 
-  res.status(200).json({ match });
+  const availability = await buildAvailabilityMap([match]);
+  res.status(200).json({
+    match: { ...match.toJSON(), availability: availability.get(String(match._id)) }
+  });
 };
 
 export const updateMatch = async (req: Request, res: Response): Promise<void> => {
@@ -138,6 +158,13 @@ export const deleteMatch = async (req: Request, res: Response): Promise<void> =>
   await existingMatch.deleteOne();
 
   res.status(200).json({ message: "Match deleted" });
+};
+
+export const assignQueuedMatch = async (req: Request, res: Response): Promise<void> => {
+  const { id } = idParamsSchema.parse(req.params);
+  const { courtId } = assignMatchSchema.parse(req.body);
+  const match = await assignMatchToCourt(id, courtId);
+  res.status(200).json({ message: "Match assigned", match });
 };
 
 export const startQueuedMatch = async (req: Request, res: Response): Promise<void> => {

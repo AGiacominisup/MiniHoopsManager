@@ -160,6 +160,43 @@ just finished, so players get a break before playing again.
 Completing a game automatically reserves the next compatible game on the freed court, without
 starting it.
 
+## 5.1 Choosing the game by hand
+
+The operator does not always want the engine's pick — a coach asks for a game to be brought forward,
+or a team is already warmed up. The same reservation is therefore also available for an explicitly
+chosen game:
+
+```text
+POST /matches/{matchId}/assign   { courtId }
+```
+
+It is the same operation with the selection step removed, not a weaker one: the game must still be
+`queued`, the court must belong to the tournament and be free, and the six players must all be idle.
+The overlap check runs inside the transaction, so a stale client cannot double-book a player; the
+request is refused with `409` instead. Re-sending the same court for a game already `ready` there is
+a no-op, so a double click does not fail.
+
+## 5.2 Reporting playability
+
+Manual selection only works if the client knows what is selectable, and the answer changes every
+time a game starts or ends. Every **queued** game returned by `GET /matches` and `GET /matches/{id}`
+therefore carries the overlap check pre-computed:
+
+```text
+availability: {
+  playable: boolean,             // no player of this game is busy elsewhere
+  busyRegistrationIds: string[]  // the players blocking it
+}
+```
+
+The block is absent on any other status: a game that is already `ready`, `in_progress`, `completed`
+or manually `scheduled` is not a candidate for assignment, so playability is meaningless for it.
+
+This keeps the rule where §19 requires it. The frontend greys out the unplayable games and can say
+which players are blocking each one, without reproducing the hard constraint client-side. The value
+is a snapshot valid at read time, and it is authoritative only in the sense that assignment
+re-validates it — the list is a hint for the UI, the transaction is the enforcement.
+
 ---
 
 # 6. Dynamic Team Generation

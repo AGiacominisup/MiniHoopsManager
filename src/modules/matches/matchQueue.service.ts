@@ -7,7 +7,20 @@ import { MatchModel, type MatchDocument } from "./match.model";
 const registrationIds = (match: MatchDocument): string[] =>
   match.teams.flatMap((team) => team.players.map((player) => String(player.registrationId)));
 
-const assignNextWithSession = async (
+// A player cannot be in two games at once: everything reserved or being played
+// holds its six players until the game is completed.
+const loadBusyRegistrationIds = async (
+  tournamentId: string,
+  session?: ClientSession
+): Promise<Set<string>> => {
+  const activeMatches = await MatchModel.find({
+    tournamentId,
+    status: { $in: ["ready", "in_progress"] }
+  }).session(session ?? null);
+  return new Set(activeMatches.flatMap(registrationIds));
+};
+
+const assertCourtIsFree = async (
   tournamentId: string,
   courtId: string,
   session: ClientSession
@@ -23,11 +36,19 @@ const assignNextWithSession = async (
     throw new ApiError(404, "Enabled court not found in tournament");
   }
 
-  const occupiedMatch = await MatchModel.findOne({
+  return MatchModel.findOne({
     tournamentId,
     courtId,
     status: { $in: ["scheduled", "ready", "in_progress"] }
   }).session(session);
+};
+
+const assignNextWithSession = async (
+  tournamentId: string,
+  courtId: string,
+  session: ClientSession
+) => {
+  const occupiedMatch = await assertCourtIsFree(tournamentId, courtId, session);
   if (occupiedMatch?.status === "ready") {
     return occupiedMatch;
   }
@@ -35,11 +56,7 @@ const assignNextWithSession = async (
     throw new ApiError(409, "Court already has an assigned match");
   }
 
-  const activeMatches = await MatchModel.find({
-    tournamentId,
-    status: { $in: ["ready", "in_progress"] }
-  }).session(session);
-  const busyPlayers = new Set(activeMatches.flatMap(registrationIds));
+  const busyPlayers = await loadBusyRegistrationIds(tournamentId, session);
   const lastCompleted = await MatchModel.findOne({ tournamentId, status: "completed" })
     .sort({ completedAt: -1 })
     .session(session);
@@ -86,6 +103,91 @@ export const assignNextMatch = async (tournamentId: string, courtId: string) => 
   } finally {
     await session.endSession();
   }
+};
+
+const assignMatchWithSession = async (
+  matchId: string,
+  courtId: string,
+  session: ClientSession
+) => {
+  const match = await MatchModel.findById(matchId).session(session);
+  if (!match) {
+    throw new ApiError(404, "Match not found");
+  }
+  // Reassigning the same court is a no-op, so a double click cannot 409.
+  if (match.status === "ready" && String(match.courtId) === courtId) {
+    return match;
+  }
+  if (match.status !== "queued") {
+    throw new ApiError(409, "Only a queued match can be assigned to a court");
+  }
+
+  const tournamentId = String(match.tournamentId);
+  const occupiedMatch = await assertCourtIsFree(tournamentId, courtId, session);
+  if (occupiedMatch) {
+    throw new ApiError(409, "Court already has an assigned match");
+  }
+
+  const busyPlayers = await loadBusyRegistrationIds(tournamentId, session);
+  const conflicting = registrationIds(match).filter((id) => busyPlayers.has(id));
+  if (conflicting.length > 0) {
+    throw new ApiError(
+      409,
+      `Match players are already busy in another match: ${conflicting.join(", ")}`
+    );
+  }
+
+  const assigned = await MatchModel.findOneAndUpdate(
+    { _id: match._id, status: "queued", courtId: null },
+    { $set: { status: "ready", courtId, assignedAt: new Date() } },
+    { new: true, runValidators: true, session }
+  );
+  if (!assigned) {
+    throw new ApiError(409, "Match was assigned by another request");
+  }
+  return assigned;
+};
+
+export const assignMatchToCourt = async (matchId: string, courtId: string) => {
+  const session = await mongoose.startSession();
+  try {
+    return await session.withTransaction(() => assignMatchWithSession(matchId, courtId, session));
+  } finally {
+    await session.endSession();
+  }
+};
+
+export interface MatchAvailability {
+  playable: boolean;
+  busyRegistrationIds: string[];
+}
+
+// Only queued matches carry an availability: they are the ones the operator can
+// still bind to a court. Anything else is already bound, played, or manual.
+export const buildAvailabilityMap = async (
+  matches: MatchDocument[]
+): Promise<Map<string, MatchAvailability>> => {
+  const queuedMatches = matches.filter((match) => match.status === "queued");
+  const tournamentIds = [...new Set(queuedMatches.map((match) => String(match.tournamentId)))];
+  const busyByTournament = new Map(
+    await Promise.all(
+      tournamentIds.map(
+        async (tournamentId) =>
+          [tournamentId, await loadBusyRegistrationIds(tournamentId)] as const
+      )
+    )
+  );
+
+  return new Map(
+    queuedMatches.map((match) => {
+      const busyPlayers = busyByTournament.get(String(match.tournamentId)) ?? new Set<string>();
+      const busyRegistrationIds = registrationIds(match).filter((id) => busyPlayers.has(id));
+      return [
+        String((match as MatchDocument & { _id: Types.ObjectId })._id),
+        { playable: busyRegistrationIds.length === 0, busyRegistrationIds }
+      ];
+    })
+  );
 };
 
 export const startMatch = async (matchId: string) => {

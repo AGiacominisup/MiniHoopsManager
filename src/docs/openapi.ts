@@ -519,7 +519,7 @@ export const openApiSpec = {
           { name: "phase", in: "query", schema: { type: "string", enum: ["qualification", "final"] } },
           { name: "status", in: "query", schema: { type: "string", enum: ["scheduled", "queued", "ready", "in_progress", "completed"] } }
         ],
-        responses: { "200": { description: "Match list" } }
+        responses: { "200": { description: "Match list; queued matches carry an availability block reporting whether their players are free" } }
       },
       post: {
         tags: ["Matches"], summary: "Create a final-phase match", security: [{ bearerAuth: [] }],
@@ -532,7 +532,7 @@ export const openApiSpec = {
       parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
       get: {
         tags: ["Matches"], summary: "Get a match", security: [{ bearerAuth: [] }],
-        responses: { "200": { description: "Match" }, "404": { description: "Not found" } }
+        responses: { "200": { description: "Match, with an availability block when queued" }, "404": { description: "Not found" } }
       },
       patch: {
         tags: ["Matches"], summary: "Update a match", security: [{ bearerAuth: [] }],
@@ -542,6 +542,15 @@ export const openApiSpec = {
       delete: {
         tags: ["Matches"], summary: "Delete a match", security: [{ bearerAuth: [] }],
         responses: { "200": { description: "Match deleted" }, "404": { description: "Not found" } }
+      }
+    },
+    "/api/matches/{id}/assign": {
+      post: {
+        tags: ["Matches"], summary: "Assign a queued match to a free court", security: [{ bearerAuth: [] }],
+        description: "Moves the match to ready. Refused when the court is taken or any of the six players is already engaged in a ready or in-progress match.",
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+        requestBody: { required: true, content: { "application/json": { schema: { type: "object", required: ["courtId"], properties: { courtId: { type: "string" } } } } } },
+        responses: { "200": { description: "Match reserved on the court" }, "404": { description: "Match or enabled court not found" }, "409": { description: "Match not queued, court occupied, or players busy" } }
       }
     },
     "/api/matches/{id}/start": {
