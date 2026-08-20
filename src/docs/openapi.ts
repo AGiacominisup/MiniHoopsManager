@@ -18,11 +18,21 @@ export const openApiSpec = {
     { name: "Players" },
     { name: "Registrations" },
     { name: "Matches" },
+    { name: "MatchReports" },
+    { name: "Referee" },
     { name: "Users" }
   ],
   components: {
     securitySchemes: {
       bearerAuth: {
+        type: "http",
+        scheme: "bearer",
+        bearerFormat: "JWT"
+      },
+      // A court-scoped token obtained from POST /api/referee/session. It is not
+      // interchangeable with bearerAuth: user routes reject it and referee
+      // routes reject a user token.
+      refereeAuth: {
         type: "http",
         scheme: "bearer",
         bearerFormat: "JWT"
@@ -242,6 +252,170 @@ export const openApiSpec = {
           password: { type: "string", minLength: 8 },
           role: { type: "string", enum: ["admin", "coach", "staff"] }
         }
+      },
+      RefereeSessionRequest: {
+        type: "object",
+        required: ["code"],
+        properties: {
+          code: {
+            type: "string",
+            description: "The 8-character court access code. Separators and lower case are accepted.",
+            example: "2345-6789"
+          }
+        }
+      },
+      RefereeSessionResponse: {
+        type: "object",
+        properties: {
+          token: { type: "string", description: "Scoped to one tournament and one court" },
+          expiresAt: { type: "string", format: "date-time" },
+          tournament: {
+            type: "object",
+            properties: {
+              _id: { type: "string" },
+              name: { type: "string" },
+              status: { type: "string" }
+            }
+          },
+          court: {
+            type: "object",
+            properties: { _id: { type: "string" }, name: { type: "string" } }
+          }
+        }
+      },
+      CourtAccess: {
+        type: "object",
+        description: "Status of a court access code. Never carries the code or its hash.",
+        properties: {
+          tournamentId: { type: "string" },
+          courtId: { type: "string" },
+          courtName: { type: "string" },
+          hasActiveCode: { type: "boolean" },
+          codeLast4: { type: "string", example: "6789" },
+          tokenVersion: { type: "integer" },
+          issuedTokenCount: { type: "integer", description: "Devices paired since the code was issued" },
+          lastUsedAt: { type: "string", format: "date-time", nullable: true },
+          revokedAt: { type: "string", format: "date-time", nullable: true }
+        }
+      },
+      MatchReportBasket: {
+        type: "object",
+        required: ["registrationId", "points", "clientSequence"],
+        properties: {
+          registrationId: { type: "string", description: "Must be one of the six players of the match" },
+          points: { type: "integer", enum: [1, 2] },
+          assistRegistrationId: {
+            type: "string",
+            nullable: true,
+            description: "A different player on the same team"
+          },
+          clientSequence: {
+            type: "integer",
+            minimum: 0,
+            description: "Authoritative ordering, unique across baskets and fouls"
+          },
+          clientRecordedAt: {
+            type: "string",
+            format: "date-time",
+            description: "Informational only: never trusted, never used for ordering"
+          }
+        }
+      },
+      MatchReportFoul: {
+        type: "object",
+        required: ["registrationId", "clientSequence"],
+        properties: {
+          registrationId: { type: "string" },
+          clientSequence: { type: "integer", minimum: 0 },
+          clientRecordedAt: { type: "string", format: "date-time" }
+        }
+      },
+      MatchReportAwards: {
+        type: "object",
+        description: "Both optional; may name the same player; may name a losing player.",
+        properties: {
+          mvpRegistrationId: { type: "string", nullable: true },
+          fairPlayRegistrationId: { type: "string", nullable: true }
+        }
+      },
+      MatchReportSubmitRequest: {
+        type: "object",
+        required: ["submissionId", "scoreA", "scoreB"],
+        properties: {
+          submissionId: {
+            type: "string",
+            format: "uuid",
+            description: "Minted once by the client and replayed verbatim on every retry"
+          },
+          scoreA: { type: "integer", minimum: 0 },
+          scoreB: { type: "integer", minimum: 0 },
+          baskets: { type: "array", maxItems: 200, items: { $ref: "#/components/schemas/MatchReportBasket" } },
+          fouls: { type: "array", maxItems: 60, items: { $ref: "#/components/schemas/MatchReportFoul" } },
+          awards: { $ref: "#/components/schemas/MatchReportAwards" }
+        }
+      },
+      MatchReportCorrectRequest: {
+        type: "object",
+        required: ["scoreA", "scoreB", "note"],
+        properties: {
+          scoreA: { type: "integer", minimum: 0 },
+          scoreB: { type: "integer", minimum: 0 },
+          baskets: { type: "array", maxItems: 200, items: { $ref: "#/components/schemas/MatchReportBasket" } },
+          fouls: { type: "array", maxItems: 60, items: { $ref: "#/components/schemas/MatchReportFoul" } },
+          awards: { $ref: "#/components/schemas/MatchReportAwards" },
+          note: { type: "string", minLength: 1, maxLength: 500, description: "Why the result changed" }
+        }
+      },
+      MatchReport: {
+        type: "object",
+        properties: {
+          _id: { type: "string" },
+          matchId: { type: "string" },
+          tournamentId: { type: "string" },
+          courtId: { type: "string" },
+          submissionId: { type: "string" },
+          scoreA: { type: "integer" },
+          scoreB: { type: "integer" },
+          unattributedPointsA: {
+            type: "integer",
+            description: "Reported score minus the points attributed to a player"
+          },
+          unattributedPointsB: { type: "integer" },
+          baskets: { type: "array", items: { $ref: "#/components/schemas/MatchReportBasket" } },
+          fouls: { type: "array", items: { $ref: "#/components/schemas/MatchReportFoul" } },
+          boxScore: {
+            type: "array",
+            description: "Exactly six lines, derived server-side",
+            items: {
+              type: "object",
+              properties: {
+                registrationId: { type: "string" },
+                side: { type: "string", enum: ["A", "B"] },
+                points: { type: "integer" },
+                onePointers: { type: "integer" },
+                twoPointers: { type: "integer" },
+                assists: { type: "integer" },
+                fouls: { type: "integer" }
+              }
+            }
+          },
+          awards: { $ref: "#/components/schemas/MatchReportAwards" },
+          submittedBy: {
+            type: "object",
+            properties: {
+              kind: { type: "string", enum: ["referee_session", "user"] },
+              sessionId: { type: "string" },
+              userId: { type: "string" }
+            }
+          },
+          submittedAt: { type: "string", format: "date-time" },
+          revision: { type: "integer", description: "0 on submission, +1 per correction" },
+          corrections: {
+            type: "array",
+            description: "Append-only audit trail; the superseded state is never deleted",
+            items: { type: "object" }
+          }
+        }
       }
     }
   },
@@ -362,8 +536,8 @@ export const openApiSpec = {
       },
       delete: {
         tags: ["Tournaments"], summary: "Delete a tournament and its related data", security: [{ bearerAuth: [] }],
-        description: "Cascades to the matches and registrations of the tournament in a single transaction. Players are never deleted.",
-        responses: { "200": { description: "Tournament deleted, with a matches/registrations summary" }, "404": { description: "Not found" } }
+        description: "Cascades to the matches, match reports, registrations and court access codes of the tournament in a single transaction. Players are never deleted.",
+        responses: { "200": { description: "Tournament deleted, with a summary of everything removed" }, "404": { description: "Not found" } }
       }
     },
     "/api/tournaments/{id}/setup": {
@@ -566,6 +740,119 @@ export const openApiSpec = {
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
         requestBody: { required: true, content: { "application/json": { schema: { type: "object", required: ["scoreA", "scoreB"], properties: { scoreA: { type: "integer", minimum: 0 }, scoreB: { type: "integer", minimum: 0 } } } } } },
         responses: { "200": { description: "Completed match, next ready match and idempotency flag" }, "409": { description: "Invalid transition or changed result" } }
+      }
+    },
+    "/api/tournaments/{id}/access-codes": {
+      get: {
+        tags: ["Referee"], summary: "List the court access code status of a tournament", security: [{ bearerAuth: [] }],
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+        responses: { "200": { description: "Court access status list, never the codes themselves", content: { "application/json": { schema: { type: "object", properties: { courtAccesses: { type: "array", items: { $ref: "#/components/schemas/CourtAccess" } } } } } } } }
+      }
+    },
+    "/api/tournaments/{id}/courts/{courtId}/access-code": {
+      parameters: [
+        { name: "id", in: "path", required: true, schema: { type: "string" } },
+        { name: "courtId", in: "path", required: true, schema: { type: "string" } }
+      ],
+      post: {
+        tags: ["Referee"],
+        summary: "Create or rotate the access code of a court",
+        description: "Returns the plaintext code exactly once. Calling it again rotates the code and unpairs every device using the previous one, which requires force=true while devices are paired.",
+        security: [{ bearerAuth: [] }],
+        parameters: [{ name: "force", in: "query", required: false, schema: { type: "boolean" }, description: "Rotate even though devices are currently paired" }],
+        responses: {
+          "201": { description: "Code created; the plaintext code is in the response and is not retrievable again" },
+          "404": { description: "Tournament not found, or not an enabled court of the tournament" },
+          "409": { description: "Devices are paired and force was not set, or the tournament is completed" }
+        }
+      },
+      delete: {
+        tags: ["Referee"], summary: "Revoke the access code of a court", security: [{ bearerAuth: [] }],
+        responses: { "200": { description: "Code revoked and every paired device unpaired" }, "404": { description: "Court access code not found" } }
+      }
+    },
+    "/api/tournaments/{id}/recompute-aggregates": {
+      post: {
+        tags: ["Registrations"],
+        summary: "Rebuild every registration statistic of the tournament (admin only)",
+        description: "Recomputes the team counters from the completed matches and the individual counters from their reports.",
+        security: [{ bearerAuth: [] }],
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+        responses: { "200": { description: "Aggregates recomputed" }, "403": { description: "Forbidden" } }
+      }
+    },
+    "/api/referee/session": {
+      post: {
+        tags: ["Referee"],
+        summary: "Trade a court access code for a scoped referee token",
+        description: "Public. The returned token works only on /api/referee endpoints and is refused everywhere else.",
+        requestBody: { required: true, content: { "application/json": { schema: { $ref: "#/components/schemas/RefereeSessionRequest" } } } },
+        responses: {
+          "200": { description: "Session issued", content: { "application/json": { schema: { $ref: "#/components/schemas/RefereeSessionResponse" } } } },
+          "400": { description: "Malformed code" },
+          "401": { description: "Invalid court access code" },
+          "429": { description: "Too many court code attempts" }
+        }
+      }
+    },
+    "/api/referee/context": {
+      get: {
+        tags: ["Referee"],
+        summary: "Read the current match on the bound court",
+        description: "Bootstrap and poll endpoint of the scorekeeper app. Returns match: null while the court is idle.",
+        security: [{ refereeAuth: [] }],
+        responses: { "200": { description: "Tournament, court, current match with its six players, and the report state" }, "401": { description: "Invalid token or revoked court session" } }
+      }
+    },
+    "/api/referee/matches/{id}/start": {
+      post: {
+        tags: ["Referee"], summary: "Start the match on the bound court", security: [{ refereeAuth: [] }],
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+        responses: { "200": { description: "Match started" }, "403": { description: "Match does not belong to the bound court" }, "409": { description: "Match is not ready" } }
+      }
+    },
+    "/api/referee/matches/{id}/report": {
+      post: {
+        tags: ["Referee"],
+        summary: "Submit the box score and complete the match",
+        description: "Single submission at the end of the game. Replaying the same submissionId returns 200 with idempotent: true. Attributed points below the reported score are accepted and returned as unattributedPoints; above it they are refused.",
+        security: [{ refereeAuth: [] }],
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+        requestBody: { required: true, content: { "application/json": { schema: { $ref: "#/components/schemas/MatchReportSubmitRequest" } } } },
+        responses: {
+          "201": { description: "Report stored, match completed and the next match reserved on the court" },
+          "200": { description: "Idempotent replay, or a report accepted for an already completed match" },
+          "400": { description: "Invalid payload, a draw, over-attribution, or a player outside the match" },
+          "403": { description: "Match does not belong to the bound court" },
+          "409": { description: "A different report exists, or the match cannot be reported" }
+        }
+      }
+    },
+    "/api/matches/{id}/report": {
+      parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+      get: {
+        tags: ["MatchReports"], summary: "Read the report of a match", security: [{ bearerAuth: [] }],
+        responses: { "200": { description: "Match report", content: { "application/json": { schema: { type: "object", properties: { report: { $ref: "#/components/schemas/MatchReport" } } } } } }, "404": { description: "Match report not found" } }
+      },
+      post: {
+        tags: ["MatchReports"],
+        summary: "Submit a report on behalf of a scorekeeper (admin, staff)",
+        description: "The paper fallback for a court with no tablet. Same semantics as the referee submission.",
+        security: [{ bearerAuth: [] }],
+        requestBody: { required: true, content: { "application/json": { schema: { $ref: "#/components/schemas/MatchReportSubmitRequest" } } } },
+        responses: { "201": { description: "Report stored and match completed" }, "200": { description: "Idempotent replay, or a report for an already completed match" }, "409": { description: "A different report exists, or the match cannot be reported" } }
+      },
+      put: {
+        tags: ["MatchReports"],
+        summary: "Correct a submitted report (admin, staff)",
+        description: "The only way a completed result changes; POST /api/matches/{id}/complete still refuses it. Allowed even after the tournament is completed. Keeps the previous state in corrections, recomputes the standings of the six players, and never reserves another match or moves any status.",
+        security: [{ bearerAuth: [] }],
+        requestBody: { required: true, content: { "application/json": { schema: { $ref: "#/components/schemas/MatchReportCorrectRequest" } } } },
+        responses: {
+          "200": { description: "Report corrected and standings recomputed" },
+          "400": { description: "Invalid payload or missing note" },
+          "409": { description: "Match is not completed, was modified concurrently, or hit the revision limit" }
+        }
       }
     },
     "/api/users": {

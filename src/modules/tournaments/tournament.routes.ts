@@ -15,6 +15,7 @@ import {
 	listAvailablePlayers,
 	listTournaments,
 	previewTournamentQualification,
+	recomputeTournamentAggregates,
 	startTournamentQualification,
 	updateTournament
 } from "./tournament.controller";
@@ -33,6 +34,7 @@ tournamentRouter.post("/:id/qualification/preview", requireAuth, requireRole(["a
 tournamentRouter.post("/:id/qualification/generate", requireAuth, requireRole(["admin", "staff"]), asyncHandler(generateTournamentQualification));
 tournamentRouter.delete("/:id/qualification", requireAuth, requireRole(["admin", "staff"]), asyncHandler(cancelTournamentQualification));
 tournamentRouter.post("/:id/courts/:courtId/assign-next", requireAuth, requireRole(["admin", "staff"]), asyncHandler(assignNextTournamentMatch));
+tournamentRouter.post("/:id/recompute-aggregates", requireAuth, requireRole(["admin"]), asyncHandler(recomputeTournamentAggregates));
 tournamentRouter.get("/:id", requireAuth, asyncHandler(getTournament));
 tournamentRouter.patch("/:id", requireAuth, requireRole(["admin", "staff"]), asyncHandler(updateTournament));
 tournamentRouter.delete("/:id", requireAuth, requireRole(["admin", "staff"]), asyncHandler(deleteTournament));

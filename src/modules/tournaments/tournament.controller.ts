@@ -2,8 +2,11 @@ import type { Request, Response } from "express";
 import mongoose from "mongoose";
 import { ApiError } from "../../utils/ApiError";
 import { idParamsSchema, tournamentCourtParamsSchema } from "../../utils/validation";
+import { CourtAccessCodeModel } from "../courtAccess/courtAccessCode.model";
 import { MatchModel } from "../matches/match.model";
+import { MatchReportModel } from "../matchReports/matchReport.model";
 import { RegistrationModel } from "../registrations/registration.model";
+import { recomputeRegistrationAggregates } from "../registrations/registrationAggregates.service";
 import { PlayerModel } from "../players/player.model";
 import { assignNextMatch } from "../matches/matchQueue.service";
 import { loadTournament, loadUnlockedTournament } from "./tournament.guards";
@@ -59,8 +62,17 @@ export const updateTournament = async (req: Request, res: Response): Promise<voi
   const body = updateTournamentSchema.parse(req.body);
   const tournament = await loadTournament(id);
 
-  if (tournament.status !== "draft" && (body.configuration || body.courts)) {
-    throw new ApiError(409, "Tournament configuration and courts are locked once it has started");
+  // winPoints is locked with the rest: registration aggregates are recomputed
+  // from the completed matches using it, so retuning it mid-tournament would
+  // silently rewrite every standing already earned.
+  if (
+    tournament.status !== "draft" &&
+    (body.configuration || body.courts || body.winPoints !== undefined)
+  ) {
+    throw new ApiError(
+      409,
+      "Tournament configuration, courts and win points are locked once it has started"
+    );
   }
 
   const startDate = body.startDate ? new Date(body.startDate) : tournament.startDate;
@@ -84,9 +96,10 @@ export const deleteTournament = async (req: Request, res: Response): Promise<voi
   const session = await mongoose.startSession();
 
   // Deleting a tournament cascades to everything owned by that tournament:
-  // matches and registrations. Players are shared across tournaments and are
-  // never removed, only their registrations for this tournament.
-  const summary = { matches: 0, registrations: 0 };
+  // matches, their reports, registrations and the court access codes. Players
+  // are shared across tournaments and are never removed, only their
+  // registrations for this tournament.
+  const summary = { matches: 0, matchReports: 0, registrations: 0, courtAccessCodes: 0 };
   try {
     await session.withTransaction(async () => {
       const tournament = await TournamentModel.findById(id).session(session);
@@ -94,12 +107,16 @@ export const deleteTournament = async (req: Request, res: Response): Promise<voi
         throw new ApiError(404, "Tournament not found");
       }
 
+      const deletedReports = await MatchReportModel.deleteMany({ tournamentId: id }).session(session);
       const deletedMatches = await MatchModel.deleteMany({ tournamentId: id }).session(session);
       const deletedRegistrations = await RegistrationModel.deleteMany({ tournamentId: id }).session(session);
+      const deletedCodes = await CourtAccessCodeModel.deleteMany({ tournamentId: id }).session(session);
       await tournament.deleteOne({ session });
 
       summary.matches = deletedMatches.deletedCount;
+      summary.matchReports = deletedReports.deletedCount;
       summary.registrations = deletedRegistrations.deletedCount;
+      summary.courtAccessCodes = deletedCodes.deletedCount;
     });
   } finally {
     await session.endSession();
@@ -265,4 +282,33 @@ export const assignNextTournamentMatch = async (req: Request, res: Response): Pr
   const { id, courtId } = tournamentCourtParamsSchema.parse(req.params);
   const match = await assignNextMatch(id, courtId);
   res.status(200).json({ match });
+};
+
+// Escape hatch: the registration counters are engine-managed, but they were
+// hand-editable for a long time and a manual completion can predate a report.
+// This rebuilds every standing of the tournament from the completed matches and
+// their reports.
+export const recomputeTournamentAggregates = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  const { id } = idParamsSchema.parse(req.params);
+  await loadTournament(id);
+
+  const registrationIds = (await RegistrationModel.find({ tournamentId: id }).select({ _id: 1 }))
+    .map((registration) => String(registration._id));
+
+  const session = await mongoose.startSession();
+  try {
+    await session.withTransaction(async () => {
+      await recomputeRegistrationAggregates(registrationIds, id, session);
+    });
+  } finally {
+    await session.endSession();
+  }
+
+  res.status(200).json({
+    message: "Registration aggregates recomputed",
+    summary: { registrations: registrationIds.length }
+  });
 };

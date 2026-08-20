@@ -87,10 +87,12 @@ const matchSchema = new Schema<MatchDocument>(
     teams: {
       type: [matchTeamSchema],
       validate: {
+        // The order is pinned, not just the set of sides: readers that index
+        // teams positionally must never disagree with the side field.
         validator: (teams: MatchTeam[]) => {
-          return teams.length === 2 && new Set(teams.map((team) => team.side)).size === 2;
+          return teams.length === 2 && teams[0].side === "A" && teams[1].side === "B";
         },
-        message: "A match must contain exactly two teams, A and B."
+        message: "A match must contain exactly two teams, ordered as side A then side B."
       }
     },
     queuePosition: { type: Number, min: 0 },

@@ -26,15 +26,11 @@ export const requireAuth = (req: Request, _res: Response, next: NextFunction): v
 
   const token = bearerMatch[1];
 
+  let payload: Partial<JwtPayload>;
   try {
-    const payload = jwt.verify(token, jwtConfig.secret, {
+    payload = jwt.verify(token, jwtConfig.secret, {
       algorithms: [jwtConfig.algorithm]
-    }) as JwtPayload;
-    req.user = {
-      userId: payload.userId,
-      role: payload.role
-    };
-    next();
+    }) as Partial<JwtPayload>;
   } catch (error: unknown) {
     const reason = error instanceof Error
       ? `${error.name}: ${error.message}`
@@ -48,6 +44,25 @@ export const requireAuth = (req: Request, _res: Response, next: NextFunction): v
 
     throw new ApiError(401, "Invalid token");
   }
+
+  // Referee session tokens are signed with the same secret, so a successful
+  // verification is not authorization. Anything that is not a user token is
+  // refused here: most read routes carry requireAuth without requireRole, so
+  // this is the only place the boundary can be enforced.
+  if (!payload.userId || !payload.role) {
+    console.warn("JWT rejected: not a user token", {
+      method: req.method,
+      path: req.originalUrl
+    });
+
+    throw new ApiError(401, "Invalid token");
+  }
+
+  req.user = {
+    userId: payload.userId,
+    role: payload.role
+  };
+  next();
 };
 
 export const requireRole = (allowedRoles: UserRole[]) => {

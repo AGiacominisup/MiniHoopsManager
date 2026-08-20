@@ -69,7 +69,13 @@ Returns `200 AuthResponse`. Invalid credentials return `401`.
 | Players | Any authenticated user | `admin`, `staff` |
 | Registrations | Any authenticated user | `admin`, `staff` |
 | Matches | Any authenticated user | `admin`, `staff` |
+| Match reports | Any authenticated user | `admin`, `staff`, or a referee session for its own court |
+| Court access codes | Any authenticated user (status only) | `admin`, `staff` |
 | Users | `admin` | `admin` |
+
+Referee sessions are a **separate** kind of credential, not a role. A referee token is rejected by
+every endpoint in this table except the ones under `/referee`, and a user token is rejected by
+`/referee`. See [Referee sessions](#referee-sessions).
 
 ## Common Responses
 
@@ -95,6 +101,7 @@ Common status codes:
 | `403` | Authenticated user does not have the required role |
 | `404` | Resource not found |
 | `409` | Duplicate resource or deletion blocked by related data |
+| `429` | Too many invalid court access code attempts (code exchange only) |
 
 ## Tournaments
 
@@ -116,7 +123,9 @@ draft ──start──> qualification ──last qualification match──> com
 `finals` is declared but not yet reachable — the finals generator does not exist, so completing the
 last qualification match currently moves the tournament straight to `completed`.
 
-Anything other than `draft` means the roster, courts and configuration are locked.
+Anything other than `draft` means the roster, courts, configuration and `winPoints` are locked.
+`winPoints` is locked with the rest because standings are recomputed from it, so retuning it
+mid-tournament would rewrite every result already earned.
 
 ### Tournament creation flow
 
@@ -228,7 +237,7 @@ Endpoints:
 | `POST` | `/tournaments` | `{ message, tournament }` |
 | `GET` | `/tournaments/:id` | `{ tournament }` |
 | `PATCH` | `/tournaments/:id` | `{ message, tournament }` |
-| `DELETE` | `/tournaments/:id` | `{ message, summary: { matches, registrations } }` |
+| `DELETE` | `/tournaments/:id` | `{ message, summary: { matches, matchReports, registrations, courtAccessCodes } }` |
 | `GET` | `/tournaments/:id/setup` | `{ tournament, attendance, readiness }` |
 | `POST` | `/tournaments/:id/start` | `{ message, tournament, matches, idempotent }` |
 | `GET` | `/tournaments/:id/available-players` | `{ players: Player[] }` |
@@ -252,10 +261,11 @@ Create payload:
 
 Only `name` is required. `startDate` and `endDate` are optional; when both are supplied, `endDate`
 cannot precede `startDate`. `status` is not accepted — a new tournament always starts as `draft`. A
-`PATCH` accepts any non-empty subset of the remaining fields. Deletion cascades: every match and
-registration of the tournament is removed in a single transaction, and the response `summary`
-reports how many of each were deleted. Players are never deleted, only their registrations for that
-tournament.
+`PATCH` accepts any non-empty subset of the remaining fields, except that `configuration`, `courts`
+and `winPoints` are refused with `409` once the tournament has started. Deletion cascades: every match,
+match report, registration and court access code of the tournament is removed in a single transaction,
+and the response `summary` reports how many of each were deleted. Players are never deleted, only their
+registrations for that tournament.
 
 A player can only be registered if they have a name or a jersey number; a nameless player's jersey
 number is copied onto the registration automatically.
@@ -317,8 +327,13 @@ export interface Registration {
   rankingPoints: number;
   matchesPlayed: number;
   wins: number;
-  pointsScored: number;
-  pointsAllowed: number;
+  pointsScored: number;  // TEAM score of every match played, not this player's own points
+  pointsAllowed: number; // TEAM score conceded
+  pointsMade: number;    // points this player scored personally, from the match reports
+  assists: number;
+  fouls: number;
+  mvpAwards: number;
+  fairPlayAwards: number;
   finalGroupId: string | null;
   attendanceStatus: "registered" | "checked_in" | "withdrawn";
   checkedInAt: string | null;
@@ -357,15 +372,37 @@ tournament — useful when a player who is strong for one age group is average i
 changed with `PATCH` while the roster is unlocked, and is read by the team generator in preference
 to the player's rating.
 
+### Statistics are engine-managed
+
+The ten counters above are derived, not authored. Team numbers (`matchesPlayed`, `wins`,
+`rankingPoints`, `pointsScored`, `pointsAllowed`) are recomputed from the completed matches;
+individual numbers (`pointsMade`, `assists`, `fouls`, `mvpAwards`, `fairPlayAwards`) come from the
+submitted [match reports](#match-reports).
+
+`pointsScored` is the **team** score copied onto all three teammates — individual scoring is
+`pointsMade`. The names are kept for compatibility.
+
+Treat all ten as read-only. The five older ones are still accepted by `PATCH /registrations/:id` for
+compatibility, but a hand-edited value is overwritten by the next report submission or correction that
+touches that player, and the five newer ones are not accepted at all.
+
+`POST /tournaments/:id/recompute-aggregates` (admin only) rebuilds every counter of the tournament
+from the completed matches and their reports. It returns
+`{ message, summary: { registrations } }` and is the escape hatch if a total ever looks wrong.
+
 ## Matches
 
 Generated qualification matches have no scheduled time and no court until they are assigned. They
 move through `queued -> ready -> in_progress -> completed`; `ready` means reserved on a court and
-waiting for an explicit Start command.
+waiting for an explicit Start command. `ready -> completed` is also reachable, but only by submitting
+a [match report](#match-reports): a report proves the game was played, so a forgotten Start does not
+strand it.
 
 Qualification matches are owned by the tournament generator: `POST` and `PATCH` reject
 `phase: "qualification"` with `409`, and generated matches cannot be edited or deleted
-individually. Use `DELETE /tournaments/:id/qualification` to discard a whole plan.
+individually. Use `DELETE /tournaments/:id/qualification` to discard a whole plan. Submitting or
+correcting a **report** is the exception — it works on generated matches, because it records what
+happened rather than changing the composition.
 
 To read a generated schedule, filter on `status=queued`; results are ordered by `queuePosition`.
 
@@ -495,6 +532,289 @@ Create payload:
 There must be exactly two teams, one `A` and one `B`, with exactly three distinct registrations
 each. Every player snapshot requires `jerseyNumber` or `name`. The court, optional final group,
 and all registrations must belong to the selected tournament.
+
+## Referee sessions
+
+The scorekeeper app is a separate frontend, used by one scorekeeper per court. There is no account:
+staff generates a **court access code** and the tablet trades it for a token scoped to that tournament
+and that court.
+
+The token is bound to the **court, not to the match**. When a match completes and the backend reserves
+the next one on that court, the same session keeps working — the tablet polls `GET /referee/context`
+and picks up whatever is currently on its court.
+
+```ts
+export interface RefereeSession {
+  token: string;
+  expiresAt: string;
+  tournament: { _id: string; name: string; status: TournamentStatus };
+  court: { _id: string; name: string };
+}
+
+export interface CourtAccess {
+  tournamentId: string;
+  courtId: string;
+  courtName: string;
+  hasActiveCode: boolean;
+  codeLast4: string;      // for the staff UI; the code itself is never returned again
+  tokenVersion: number;
+  issuedTokenCount: number;
+  lastUsedAt: string | null;
+  revokedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+```
+
+### Managing codes (staff)
+
+| Method | Path | Role | Response |
+| --- | --- | --- | --- |
+| `POST` | `/tournaments/:id/courts/:courtId/access-code` | `admin`, `staff` | `{ message, code, courtAccess, unpairedDevices }` |
+| `GET` | `/tournaments/:id/access-codes` | authenticated | `{ courtAccesses: CourtAccess[] }` |
+| `DELETE` | `/tournaments/:id/courts/:courtId/access-code` | `admin`, `staff` | `{ message }` |
+
+`POST` returns the plaintext `code` — formatted as `XXXX-XXXX` — **exactly once**. It is stored only as
+a keyed hash and cannot be retrieved again; if it is lost, issue a new one.
+
+Calling `POST` again **is** rotation, and rotation unpairs every tablet already using that court's code.
+Because that would strand a scorekeeper mid-match, it is refused with `409` while the court has paired
+devices unless you repeat the call with `?force=true`. The response reports how many devices were
+unpaired.
+
+Codes can be issued and rotated at any time during play: they are unrelated to the court lock that
+freezes court composition when the tournament leaves `draft`. The only refusal is a `completed`
+tournament.
+
+| Status | Meaning |
+| --- | --- |
+| `201` | Code created or rotated |
+| `404` | Tournament not found, or the court is not an enabled court of the tournament |
+| `409` | `Court has N paired device(s); repeat with force=true to rotate the code` |
+| `409` | `Tournament is completed` |
+
+### Pairing a tablet
+
+```http
+POST /api/referee/session
+{ "code": "2345-6789" }
+```
+
+Public — the only unauthenticated endpoint besides login. Separators and lower case are accepted.
+Returns `200 RefereeSession`.
+
+| Status | Meaning |
+| --- | --- |
+| `200` | Session issued |
+| `400` | The code is not 8 characters |
+| `401` | `Invalid court access code` — unknown, revoked, or the tournament is not accepting reports |
+| `429` | `Too many court code attempts` — 10 failures lock the caller out for 15 minutes |
+
+`401` is deliberately the same answer for every failure, so nothing reveals that a code exists.
+
+Use the returned `token` as an ordinary `Authorization: Bearer` header on `/referee` endpoints **only**.
+It is not a user token: every other endpoint rejects it with `401`. Conversely a staff token is rejected
+by `/referee`.
+
+The session dies when the code is rotated or revoked, at which point every `/referee` call answers
+`401 Court session has been revoked`.
+
+### Reading the court state
+
+```http
+GET /api/referee/context
+```
+
+```ts
+{
+  tournament: { _id, name, status, winPoints },
+  court: { _id, name },
+  match: Match | null,               // the ready or in_progress match on this court
+  report: null | { submitted: true; revision: number; submittedAt: string; scoreA: number; scoreB: number }
+}
+```
+
+This is both the bootstrap and the poll (every ~10 s). `match` is `null` when the court is idle, and
+carries the six player snapshots, so no roster call is needed. A non-null `report` tells a tablet that
+recovered after a lost response that its submission already landed.
+
+```http
+POST /api/referee/matches/:id/start
+```
+
+Moves the match from `ready` to `in_progress`. The scorekeeper is the one who knows when tip-off
+happened, so this does not require staff. `409` if the match is not `ready`, `403` if it is not on this
+court.
+
+## Match reports
+
+A report is the box score of one match: baskets attributed to players, optional assists, fouls, and two
+optional subjective awards. It is submitted **once, when the match is over** — the tablet buffers
+everything locally during play, so there is no per-event endpoint and no live score.
+
+```ts
+export interface MatchReportBasketInput {
+  registrationId: string;
+  points: 1 | 2;
+  assistRegistrationId?: string | null; // must be a different player on the same team
+  clientSequence: number;               // unique across baskets and fouls; the authoritative order
+  clientRecordedAt?: string;            // informational only, never trusted
+}
+
+export interface MatchReportFoulInput {
+  registrationId: string;
+  clientSequence: number;
+  clientRecordedAt?: string;
+}
+
+export interface MatchReportSubmitRequest {
+  submissionId: string;   // UUID, minted once when Submit is tapped, replayed verbatim on retries
+  scoreA: number;
+  scoreB: number;
+  baskets?: MatchReportBasketInput[];   // max 200
+  fouls?: MatchReportFoulInput[];       // max 60
+  awards?: {
+    mvpRegistrationId?: string | null;
+    fairPlayRegistrationId?: string | null;
+  };
+}
+
+export interface MatchReportPlayerLine {
+  registrationId: string;
+  side: "A" | "B";
+  points: number;
+  onePointers: number;
+  twoPointers: number;
+  assists: number;
+  fouls: number;
+}
+
+export interface MatchReport {
+  _id: string;
+  matchId: string;
+  tournamentId: string;
+  courtId: string;
+  submissionId: string;
+  scoreA: number;
+  scoreB: number;
+  unattributedPointsA: number;  // reported score minus the points attributed to a player
+  unattributedPointsB: number;
+  baskets: Array<MatchReportBasketInput & { side: "A" | "B" }>;
+  fouls: Array<MatchReportFoulInput & { side: "A" | "B" }>;
+  boxScore: MatchReportPlayerLine[];   // exactly 6 lines, derived server-side
+  awards: { mvpRegistrationId: string | null; fairPlayRegistrationId: string | null };
+  submittedBy: { kind: "referee_session" | "user"; sessionId?: string; userId?: string };
+  submittedAt: string;
+  revision: number;                    // 0 on submission, +1 per correction
+  corrections: Array<{
+    revision: number;
+    correctedBy: string;
+    correctedAt: string;
+    note?: string;
+    previousScoreA: number;
+    previousScoreB: number;
+    previousBaskets: MatchReport["baskets"];
+    previousFouls: MatchReport["fouls"];
+    previousAwards: MatchReport["awards"];
+  }>;
+  createdAt: string;
+  updatedAt: string;
+}
+```
+
+| Method | Path | Auth | Response |
+| --- | --- | --- | --- |
+| `POST` | `/referee/matches/:id/report` | referee session | `{ message, report, match, nextMatch, warnings, idempotent }` |
+| `GET` | `/matches/:id/report` | authenticated | `{ report }` |
+| `POST` | `/matches/:id/report` | `admin`, `staff` | same as the referee submit |
+| `PUT` | `/matches/:id/report` | `admin`, `staff` | `{ message, report, match, warnings }` |
+
+`side` is derived by the server from the team that holds the player: do not send it.
+
+### Submitting completes the match
+
+One call, one transaction. It sets the match to `completed`, records the score, reserves the next
+compatible match on the freed court and returns it as `nextMatch`, and closes the tournament when
+nothing is left to play — exactly like `POST /matches/:id/complete`, which remains available for the
+paper fallback.
+
+A `ready` match can be reported directly: a report proves the game was played, so forgetting to press
+Start does not strand it.
+
+| Status | Meaning |
+| --- | --- |
+| `201` | Report stored and match completed |
+| `200` | Idempotent replay (`idempotent: true`), or a report accepted for an already completed match |
+| `400` | Invalid payload, a draw, over-attribution, or a player/assist/award outside the match |
+| `401` | Missing or invalid token, or the court session was revoked |
+| `403` | `Match does not belong to the bound court` |
+| `404` | `Match not found` |
+| `409` | `A different report was already submitted for this match` |
+| `409` | `Only a ready or in-progress match can be reported` |
+
+### Attribution is best effort
+
+A single scorekeeper will not attribute every basket, so the **team score is authoritative** and the
+events are cross-checked against it:
+
+- attributed points **below** the score are accepted; the shortfall is returned as
+  `unattributedPointsA` / `unattributedPointsB` and `warnings: ["unattributedPoints"]`, so the UI can
+  say "3 points not attributed — submitted anyway";
+- attributed points **above** the score are refused with
+  `400 Attributed points exceed the reported score for side A`.
+
+Standings are always computed from the match score, never from the events, so an imprecise attribution
+degrades only the box score.
+
+Draws are refused with `400 Draws are not supported in the current tournament format`: a match is
+played to a target score, so the tablet should disable Submit while the scores are level.
+
+MVP and fair play may be the same player, may be on the losing side, and may have scored nothing. Both
+are optional.
+
+### The offline-first client contract
+
+Three rules the tablet must follow:
+
+1. **Mint `submissionId` once**, when the scorekeeper taps Submit, persist it locally, and replay it
+   byte-identically on every retry. A replay returns `200` with `idempotent: true` and changes nothing.
+   A *new* `submissionId` for a match that already has a report returns `409`.
+2. **On `401`, show the pairing screen and keep the buffer.** A revoked or rotated code must never cost
+   the scorekeeper a match; after re-pairing, resubmit the same payload with the same `submissionId`.
+3. **Order events with `clientSequence`, not with time.** `clientRecordedAt` is stored for forensics and
+   read by nothing, so a tablet with a wrong clock still submits correctly.
+
+### Correcting a report
+
+```http
+PUT /api/matches/:id/report
+{ "scoreA": 14, "scoreB": 11, "baskets": [...], "fouls": [...], "awards": {...},
+  "note": "Last basket credited to the wrong player" }
+```
+
+Admin and staff only — never the tablet. `note` is required. The match must be `completed`.
+
+This is the **only** way a completed result changes: `POST /matches/:id/complete` still answers
+`409 Completed match result cannot be changed`. A correction is allowed even after the tournament is
+`completed`, which is the main use case — fixing the standings before the awards.
+
+The previous state is kept in full in `corrections` and `revision` is bumped; nothing is ever deleted.
+The standings of the six players are recomputed, so a correction that flips the winner moves `wins` and
+`rankingPoints` for all six. It never reserves another match, never changes the match status or its
+timestamps, and never moves the tournament status.
+
+A match completed by hand with no report can be given one through the same endpoint (it is created at
+`revision: 0`). A report arriving late for such a match through the normal submit path is also accepted
+as the better evidence: it updates the score and the standings without touching the schedule.
+
+| Status | Meaning |
+| --- | --- |
+| `200` | Corrected |
+| `400` | Same validation as the submit, plus a missing `note` |
+| `404` | `Match not found` |
+| `409` | `Only a completed match can be corrected` |
+| `409` | `Match report was modified concurrently` |
+| `409` | `Match report revision limit reached` (20 corrections) |
 
 ## Users
 

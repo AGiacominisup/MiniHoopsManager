@@ -1,8 +1,29 @@
-import type { ClientSession, HydratedDocument } from "mongoose";
+import type { ClientSession, HydratedDocument, Types } from "mongoose";
 import { ApiError } from "../../utils/ApiError";
-import { TournamentModel, type TournamentDocument } from "./tournament.model";
+import { TournamentModel, type Court, type TournamentDocument } from "./tournament.model";
 
 export type TournamentEntity = HydratedDocument<TournamentDocument>;
+
+// Courts are embedded subdocuments, so their _id is not on the Court interface.
+export type CourtEntity = Court & { _id: Types.ObjectId };
+
+export const findCourt = (
+  tournament: TournamentEntity,
+  courtId: string
+): CourtEntity | undefined =>
+  tournament.courts.find((candidate) => String((candidate as CourtEntity)._id) === courtId) as
+    | CourtEntity
+    | undefined;
+
+export const findEnabledCourt = (tournament: TournamentEntity, courtId: string): CourtEntity => {
+  const court = findCourt(tournament, courtId);
+
+  if (!court || !court.enabled) {
+    throw new ApiError(404, "Enabled court not found in tournament");
+  }
+
+  return court;
+};
 
 export const loadTournament = async (
   tournamentId: string,

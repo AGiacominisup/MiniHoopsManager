@@ -11,8 +11,16 @@ export interface RegistrationDocument {
   rankingPoints: number;
   matchesPlayed: number;
   wins: number;
+  /** Team score of every game played, not this player's own points. */
   pointsScored: number;
+  /** Team score conceded in every game played. */
   pointsAllowed: number;
+  /** Points this player scored personally, from the submitted match reports. */
+  pointsMade: number;
+  assists: number;
+  fouls: number;
+  mvpAwards: number;
+  fairPlayAwards: number;
   finalGroupId: Schema.Types.ObjectId | null;
   attendanceStatus: AttendanceStatus;
   checkedInAt: Date | null;
@@ -27,11 +35,21 @@ const registrationSchema = new Schema<RegistrationDocument>(
     // per-tournament override. Left unset when the player has no rating, so an
     // absent value means "fall back to the player record".
     skillRating: { type: Number, min: 0, max: 10 },
+    // Every counter below is engine-managed: recomputeRegistrationAggregates is
+    // the only writer once a match report exists, and it recomputes from the
+    // completed matches and their reports rather than incrementing.
     rankingPoints: { type: Number, default: 0 },
     matchesPlayed: { type: Number, default: 0 },
     wins: { type: Number, default: 0 },
+    // Team score, copied onto all three teammates. Individual scoring is
+    // pointsMade: do not confuse the two.
     pointsScored: { type: Number, default: 0 },
     pointsAllowed: { type: Number, default: 0 },
+    pointsMade: { type: Number, default: 0, min: 0 },
+    assists: { type: Number, default: 0, min: 0 },
+    fouls: { type: Number, default: 0, min: 0 },
+    mvpAwards: { type: Number, default: 0, min: 0 },
+    fairPlayAwards: { type: Number, default: 0, min: 0 },
     finalGroupId: { type: Schema.Types.ObjectId, default: null },
     attendanceStatus: {
       type: String,

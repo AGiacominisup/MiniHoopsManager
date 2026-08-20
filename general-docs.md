@@ -559,6 +559,26 @@ Possible factors include:
 - individual performance;
 - other tournament-specific metrics.
 
+**Team numbers and individual numbers are two different things**, and the counters on `Registration`
+keep them apart:
+
+| Counter | Source | Meaning |
+| --- | --- | --- |
+| `matchesPlayed`, `wins`, `rankingPoints` | the game | outcome, from the recorded score |
+| `pointsScored`, `pointsAllowed` | the game | the **team** score, copied onto all three teammates |
+| `pointsMade`, `assists`, `fouls` | the match report | what this player did personally |
+| `mvpAwards`, `fairPlayAwards` | the match report | the scorekeeper's subjective calls |
+
+`pointsScored` is *not* individual scoring — `pointsMade` is. The names are kept for compatibility
+with the existing API.
+
+**The layering rule.** Team counters are recomputed from the game, individual counters from its
+report. A game closed by hand has no report at all, so the game has to stay authoritative for the
+standings — which is also what keeps an imprecise attribution from ever distorting the ranking (§22).
+
+All ten counters are engine-managed: `recomputeRegistrationAggregates` recomputes them from scratch
+and `$set`s them, so it is self-healing and a correction needs no reversal logic.
+
 The ranking system should be implemented independently from the game generation algorithm so that it can evolve without requiring a rewrite of the scheduling engine.
 
 ## 12.1 Player Skill Rating
@@ -669,9 +689,13 @@ queued → ready → in_progress → completed
 `scheduled` exists for manually created games that do have a planned time. It is not used by the
 generator.
 
+`ready → completed` is also reachable, but **only** through a submitted match report (§22): a report
+proves the game was played, so a scorekeeper who forgot to press Start must not be able to strand it.
+The report sets `startedAt` itself in that case.
+
 A completed game generates the data required to update the tournament ranking.
 
-The score entry should therefore trigger the appropriate ranking recalculation/update process.
+The score entry therefore triggers the ranking recalculation for the six registrations involved.
 
 ---
 
@@ -724,6 +748,12 @@ the last final closes the tournament.
 
 Every game has been played and the awards can be given out. The tournament is effectively
 read-only, and exists to be queried for results and statistics.
+
+**One audited exception.** A match report can be corrected by admin or staff after the tournament is
+`completed` — indeed that is the main reason the correction path exists, since a wrong attribution is
+usually noticed while reading the final standings. A correction rewrites the score and the box score
+of one game and recomputes the affected standings; it never moves `Tournament.status`, never reopens a
+game, and records who changed what and why (§22).
 
 ---
 
@@ -869,7 +899,7 @@ This guarantees that the same tournament logic can later be consumed by:
 
 - web frontend;
 - mobile application;
-- scoring application;
+- scoring application — implemented, see §22;
 - administration dashboard;
 - external integrations.
 
@@ -949,3 +979,127 @@ A good schedule additionally:
 The ultimate output of the algorithm is therefore not simply a list of games.
 
 It is a **balanced tournament experience**.
+---
+
+# 22. Match Reporting and the Scorekeeper App
+
+The scorekeeper ("refertista") runs a **separate frontend** on a phone or tablet at courtside: one
+scorekeeper per court, recording what happens during the game and submitting it when the game ends.
+
+What is recorded:
+
+- every basket, attributed to a player, worth `1` or `2` points;
+- an **optional assist**, attributed to a teammate of the scorer;
+- every foul, attributed to a player;
+- optionally, at the end, two subjective awards: **MVP** and **fair play** — the second one is
+  deliberately not about performance, but about behaviour.
+
+## 22.1 One scorekeeper per court, paired with a code
+
+The scorekeeper is a volunteer, not a user of the system: there is no account, no email, no password.
+
+Staff generates a **court access code** and the tablet trades it for a token scoped to that
+tournament and that court:
+
+```text
+POST /tournaments/{id}/courts/{courtId}/access-code   (staff)  → the code, shown once
+POST /referee/session                                 (public) → a scoped token
+```
+
+The session is bound to the **court, not to the game**. When a game completes and the engine reserves
+the next one on that court, the same session keeps working with no re-pairing: the tablet polls
+`GET /referee/context` and picks up whatever is currently on its court.
+
+Design points that are load-bearing:
+
+- **The code is 8 characters** from a 30-symbol alphabet with no ambiguous glyphs (`I`, `L`, `O`, `U`,
+  `0`, `1`), stored only as a keyed HMAC. It is shown to staff exactly once and is not recoverable.
+- **Brute force is bounded by a persistent lockout**, not by the code length: 10 failed attempts per
+  caller lock the exchange endpoint for 15 minutes, counted in MongoDB so the limit survives a restart
+  and holds across instances.
+- **A referee token is not a user token.** It carries no `userId` and no `role`, and `requireAuth`
+  rejects it outright. This matters because most read routes carry `requireAuth` without a role check,
+  so without that rejection a court tablet would be able to read every tournament, player and
+  registration in the system.
+- **Rotating or revoking a code unpairs every tablet on that court** at its next request, through a
+  version counter compared on every call — a stateless token cannot otherwise be withdrawn. Because
+  that would strand a scorekeeper holding an unsent report, rotation refuses to run on a court with
+  paired devices unless it is forced.
+- **Codes are not subject to the court lock.** Courts and configuration freeze when the tournament
+  leaves `draft`, but a code must stay rotatable during play; the two are unrelated concerns.
+
+## 22.2 Offline first: one submission, at the end
+
+The tablet accumulates the whole box score **locally** and sends it **once**, when the game is over.
+There is no per-event endpoint and no live score: a gym has unreliable wifi, and a scorekeeper must
+never lose thirty baskets to a dropped connection.
+
+Consequences the client must honour:
+
+- the client mints a `submissionId` (UUID) **once**, when Submit is tapped, and replays it verbatim on
+  every retry. A replay returns `200` with `idempotent: true` and changes nothing;
+- a `401` means "re-pair", never "discard the buffer";
+- `clientSequence` is the authoritative ordering of events. `clientRecordedAt` is stored but read by
+  nothing, so a tablet with a wrong clock can still submit.
+
+Submitting the report **completes the game**: one call, one transaction, one retry story. It reserves
+the next game on the freed court and returns it as `nextMatch`, exactly like the ordinary completion
+path. `POST /matches/{id}/complete` remains for the paper fallback.
+
+## 22.3 The team score is authoritative, the attribution is best effort
+
+A single scorekeeper watching a 3v3 game will not attribute every basket. The report therefore carries
+**both** the team score and the attributed events:
+
+- attributed points **below** the score are accepted, and the shortfall is stored as
+  `unattributedPointsA` / `unattributedPointsB` with a `unattributedPoints` warning in the response;
+- attributed points **above** the score are refused with `400` — an unambiguous input error, fixable on
+  the tablet in seconds;
+- the remainder lives on the report and never on the game.
+
+This is the point of the layering in §12: standings are recomputed from the **game** score, so a
+scorekeeper who misses an attribution degrades the box score and can never distort the ranking. The
+scoreboard the children and parents just watched stays the official result.
+
+## 22.4 No draws
+
+A game is played to a target score and the first side to reach it wins, so a level score is
+structurally impossible and is treated as an input error. Both the report and the correction refuse it
+with the same message the completion endpoint already uses:
+`Draws are not supported in the current tournament format`.
+
+Supporting draws later would need `Registration.draws` and a `drawPoints` setting; the recompute
+service is the only place that would have to learn the new rule.
+
+## 22.5 Correcting a report
+
+Mistakes are fixed from the **back office**, by admin or staff, never from the tablet: once submitted,
+the scorekeeper is done.
+
+`PUT /matches/{id}/report` requires a `note` explaining the change, keeps the full previous state in an
+append-only `corrections` array with who changed it and when, and bumps a `revision` counter. The
+superseded state is never deleted — it is the only way to explain a changed standing to a parent.
+
+A correction recomputes the standings of the six players, so a flipped winner moves `wins` and
+`rankingPoints` for all six without any reversal logic.
+
+What a correction must never do, and does not:
+
+- **reserve another game.** The court moved on hours ago; doing so would fail with
+  `Court already has an assigned match` depending only on whether that court happens to be busy;
+- **touch `status`, `completedAt`, `startedAt` or `courtId`.** Court assignment sorts by `completedAt`
+  for its rest heuristic, so rewriting it would silently degrade every later assignment;
+- **move `Tournament.status`**, including when the tournament is already `completed` (§15).
+
+A game closed by hand that never got a report can be given one through the same endpoint, and a report
+arriving late for such a game is accepted as the better evidence — updating the score and the standings
+without touching the schedule.
+
+## 22.6 Not covered yet
+
+- **An abandoned game.** A game nobody ever reports stays `in_progress`, holding its court and its six
+  players. The existing escape hatch is a staff completion with a typed score; a real `abandoned`
+  status would touch the status enum, the court index and the queue engine.
+- **`targetScore` as configuration.** The target that makes draws impossible is a documented rule, but
+  nothing validates against it. Recording it would let the backend flag a report whose winner never
+  reached the target.

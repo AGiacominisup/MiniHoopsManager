@@ -1,11 +1,46 @@
 import mongoose, { type ClientSession, Types } from "mongoose";
 import { ApiError } from "../../utils/ApiError";
 import { RegistrationModel } from "../registrations/registration.model";
+import { findEnabledCourt, loadTournament } from "../tournaments/tournament.guards";
 import { TournamentModel } from "../tournaments/tournament.model";
-import { MatchModel, type MatchDocument } from "./match.model";
+import {
+  MatchModel,
+  type MatchDocument,
+  type MatchSide,
+  type MatchTeam
+} from "./match.model";
 
 const registrationIds = (match: MatchDocument): string[] =>
   match.teams.flatMap((team) => team.players.map((player) => String(player.registrationId)));
+
+const teamBySide = (match: MatchDocument, side: MatchSide): MatchTeam => {
+  const team = match.teams.find((candidate) => candidate.side === side);
+  if (!team) {
+    throw new ApiError(500, `Match is missing team ${side}`);
+  }
+  return team;
+};
+
+export interface MatchOutcome {
+  teamA: MatchTeam;
+  teamB: MatchTeam;
+  // null only for a level score, which the format makes impossible: a game is
+  // played to a target score and the first side to reach it wins.
+  winnerSide: MatchSide | null;
+}
+
+// The single definition of "who won". Reading teams positionally instead of by
+// side used to credit the wrong three players on any match whose teams were
+// stored as [B, A].
+export const resolveMatchOutcome = (
+  match: MatchDocument,
+  scoreA: number,
+  scoreB: number
+): MatchOutcome => ({
+  teamA: teamBySide(match, "A"),
+  teamB: teamBySide(match, "B"),
+  winnerSide: scoreA === scoreB ? null : scoreA > scoreB ? "A" : "B"
+});
 
 // A player cannot be in two games at once: everything reserved or being played
 // holds its six players until the game is completed.
@@ -25,16 +60,8 @@ const assertCourtIsFree = async (
   courtId: string,
   session: ClientSession
 ) => {
-  const tournament = await TournamentModel.findById(tournamentId).session(session);
-  if (!tournament) {
-    throw new ApiError(404, "Tournament not found");
-  }
-  const court = tournament.courts.find(
-    (candidate) => String((candidate as typeof candidate & { _id: Types.ObjectId })._id) === courtId
-  );
-  if (!court || !court.enabled) {
-    throw new ApiError(404, "Enabled court not found in tournament");
-  }
+  const tournament = await loadTournament(tournamentId, session);
+  findEnabledCourt(tournament, courtId);
 
   return MatchModel.findOne({
     tournamentId,
@@ -206,94 +233,141 @@ export const startMatch = async (matchId: string) => {
   return match;
 };
 
+export interface CompleteMatchOptions {
+  // A submitted report proves the game was played, so a court operator who
+  // forgot to press Start must not be able to strand it.
+  allowReady?: boolean;
+  // The report path owns every registration counter through
+  // recomputeRegistrationAggregates. Two writers to the same counters is how
+  // these totals would drift.
+  skipRegistrationAggregates?: boolean;
+  // A late report for an already completed match must not reserve anything: the
+  // court moved on hours ago.
+  skipAssignNext?: boolean;
+}
+
+export interface CompleteMatchResult {
+  match: mongoose.HydratedDocument<MatchDocument>;
+  nextMatch: mongoose.HydratedDocument<MatchDocument> | null;
+  idempotent: boolean;
+}
+
+export const completeMatchWithSession = async (
+  matchId: string,
+  scoreA: number,
+  scoreB: number,
+  session: ClientSession,
+  options: CompleteMatchOptions = {}
+): Promise<CompleteMatchResult> => {
+  const match = await MatchModel.findById(matchId).session(session);
+  if (!match) {
+    throw new ApiError(404, "Match not found");
+  }
+  if (match.status === "completed") {
+    if (match.scoreA !== scoreA || match.scoreB !== scoreB) {
+      throw new ApiError(409, "Completed match result cannot be changed");
+    }
+    return { match, nextMatch: null, idempotent: true };
+  }
+
+  const startable = options.allowReady
+    ? match.status === "in_progress" || match.status === "ready"
+    : match.status === "in_progress";
+  if (!startable || !match.courtId) {
+    throw new ApiError(
+      409,
+      options.allowReady
+        ? "Only a ready or in-progress match can be completed"
+        : "Only an in-progress match can be completed"
+    );
+  }
+
+  const tournament = await TournamentModel.findById(match.tournamentId).session(session);
+  if (!tournament) {
+    throw new ApiError(404, "Tournament not found");
+  }
+
+  if (!options.skipRegistrationAggregates) {
+    const { teamA, teamB, winnerSide } = resolveMatchOutcome(match, scoreA, scoreB);
+    const winners = winnerSide === "A" ? teamA : teamB;
+    const losers = winnerSide === "A" ? teamB : teamA;
+    const winnerScore = Math.max(scoreA, scoreB);
+    const loserScore = Math.min(scoreA, scoreB);
+    await RegistrationModel.bulkWrite(
+      [
+        ...winners.players.map((player) => ({
+          updateOne: {
+            filter: { _id: player.registrationId },
+            update: {
+              $inc: {
+                matchesPlayed: 1,
+                wins: winnerSide === null ? 0 : 1,
+                rankingPoints: winnerSide === null ? 0 : tournament.winPoints,
+                pointsScored: winnerScore,
+                pointsAllowed: loserScore
+              }
+            }
+          }
+        })),
+        ...losers.players.map((player) => ({
+          updateOne: {
+            filter: { _id: player.registrationId },
+            update: {
+              $inc: {
+                matchesPlayed: 1,
+                pointsScored: loserScore,
+                pointsAllowed: winnerScore
+              }
+            }
+          }
+        }))
+      ],
+      { session }
+    );
+  }
+
+  match.set({
+    status: "completed",
+    scoreA,
+    scoreB,
+    startedAt: match.startedAt ?? new Date(),
+    completedAt: new Date()
+  });
+  await match.save({ session });
+
+  const nextMatch = options.skipAssignNext
+    ? null
+    : await assignNextWithSession(String(match.tournamentId), String(match.courtId), session);
+
+  const remaining = await MatchModel.exists({
+    tournamentId: match.tournamentId,
+    phase: "qualification",
+    status: { $in: ["queued", "ready", "in_progress"] }
+  }).session(session);
+  if (!remaining) {
+    // Once the finals generator exists this transition becomes
+    // qualification -> finals, and only the last final closes the tournament.
+    await TournamentModel.updateOne(
+      { _id: tournament._id, status: "qualification" },
+      { $set: { status: "completed" } },
+      { session }
+    );
+  }
+
+  return { match, nextMatch, idempotent: false };
+};
+
 export const completeMatch = async (matchId: string, scoreA: number, scoreB: number) => {
   const session = await mongoose.startSession();
   try {
-    let completedMatch: mongoose.HydratedDocument<MatchDocument> | null = null;
-    let nextMatch: mongoose.HydratedDocument<MatchDocument> | null = null;
-    let idempotent = false;
+    let result: CompleteMatchResult | undefined;
     await session.withTransaction(async () => {
-      const match = await MatchModel.findById(matchId).session(session);
-      if (!match) {
-        throw new ApiError(404, "Match not found");
-      }
-      if (match.status === "completed") {
-        if (match.scoreA !== scoreA || match.scoreB !== scoreB) {
-          throw new ApiError(409, "Completed match result cannot be changed");
-        }
-        completedMatch = match;
-        idempotent = true;
-        return;
-      }
-      if (match.status !== "in_progress" || !match.courtId) {
-        throw new ApiError(409, "Only an in-progress match can be completed");
-      }
-
-      const tournament = await TournamentModel.findById(match.tournamentId).session(session);
-      if (!tournament) {
-        throw new ApiError(404, "Tournament not found");
-      }
-      const winners = scoreA > scoreB ? match.teams[0] : match.teams[1];
-      const losers = scoreA > scoreB ? match.teams[1] : match.teams[0];
-      const winnerScore = Math.max(scoreA, scoreB);
-      const loserScore = Math.min(scoreA, scoreB);
-      await RegistrationModel.bulkWrite(
-        [
-          ...winners.players.map((player) => ({
-            updateOne: {
-              filter: { _id: player.registrationId },
-              update: {
-                $inc: {
-                  matchesPlayed: 1,
-                  wins: 1,
-                  rankingPoints: tournament.winPoints,
-                  pointsScored: winnerScore,
-                  pointsAllowed: loserScore
-                }
-              }
-            }
-          })),
-          ...losers.players.map((player) => ({
-            updateOne: {
-              filter: { _id: player.registrationId },
-              update: {
-                $inc: {
-                  matchesPlayed: 1,
-                  pointsScored: loserScore,
-                  pointsAllowed: winnerScore
-                }
-              }
-            }
-          }))
-        ],
-        { session }
-      );
-
-      match.set({ status: "completed", scoreA, scoreB, completedAt: new Date() });
-      await match.save({ session });
-      completedMatch = match;
-      nextMatch = await assignNextWithSession(
-        String(match.tournamentId),
-        String(match.courtId),
-        session
-      );
-
-      const remaining = await MatchModel.exists({
-        tournamentId: match.tournamentId,
-        phase: "qualification",
-        status: { $in: ["queued", "ready", "in_progress"] }
-      }).session(session);
-      if (!remaining) {
-        // Once the finals generator exists this transition becomes
-        // qualification -> finals, and only the last final closes the tournament.
-        await TournamentModel.updateOne(
-          { _id: tournament._id, status: "qualification" },
-          { $set: { status: "completed" } },
-          { session }
-        );
-      }
+      result = await completeMatchWithSession(matchId, scoreA, scoreB, session);
     });
-    return { match: completedMatch, nextMatch, idempotent };
+    if (!result) {
+      throw new ApiError(500, "Match completion did not run");
+    }
+    return result;
   } finally {
     await session.endSession();
   }

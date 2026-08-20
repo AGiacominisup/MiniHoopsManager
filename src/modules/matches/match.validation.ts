@@ -28,8 +28,8 @@ const matchFields = {
   teams: z
     .array(matchTeamSchema)
     .length(2)
-    .refine((teams) => new Set(teams.map((team) => team.side)).size === 2, {
-      message: "Teams must contain sides A and B"
+    .refine((teams) => teams[0].side === "A" && teams[1].side === "B", {
+      message: "Teams must be ordered as side A then side B"
     })
     .refine(
       (teams) => {

@@ -32,10 +32,14 @@ export const errorHandler = (
     return;
   }
 
+  // Never reflect an unexpected error message to the caller: it can carry a
+  // connection string or a stack detail, and some endpoints are public.
   if (err instanceof Error) {
-    res.status(500).json({ message: err.message });
+    console.error("Unhandled error", { name: err.name, message: err.message, stack: err.stack });
+    res.status(500).json({ message: "Internal server error" });
     return;
   }
 
+  console.error("Unhandled non-error rejection", { err });
   res.status(500).json({ message: "Unknown server error" });
 };
