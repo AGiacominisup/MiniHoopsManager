@@ -2,5 +2,7 @@ import mongoose from "mongoose";
 import { env } from "./env";
 
 export const connectToDatabase = async (): Promise<void> => {
-  await mongoose.connect(env.MONGODB_URI);
+  await mongoose.connect(env.MONGODB_URI, {
+    serverSelectionTimeoutMS: 10_000
+  });
 };
