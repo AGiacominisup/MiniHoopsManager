@@ -1,6 +1,6 @@
 import { Schema, model } from "mongoose";
 
-export type UserRole = "admin" | "coach" | "staff";
+export type UserRole = "admin" | "coach" | "staff" | "referee";
 
 export interface UserDocument {
   email: string;
@@ -23,7 +23,7 @@ const userSchema = new Schema<UserDocument>(
     },
     role: {
       type: String,
-      enum: ["admin", "coach", "staff"],
+      enum: ["admin", "coach", "staff", "referee"],
       default: "staff",
       required: true
     }

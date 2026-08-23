@@ -6,7 +6,7 @@ import jwt from "jsonwebtoken";
 import { app } from "../app";
 import { jwtConfig } from "../config/jwt";
 import { ApiError } from "../utils/ApiError";
-import { requireAuth, requireRole } from "./auth";
+import { requireAuth, requireBackofficeUser, requireRole } from "./auth";
 
 const requestWithAuthorization = (authorization?: string): Request => ({
   method: "GET",
@@ -107,6 +107,23 @@ test("requireRole rejects a request that only carries a referee session", () => 
       }) as NextFunction);
     },
     (error: unknown) => error instanceof ApiError && error.statusCode === 401
+  );
+  assert.equal(nextCalled, false);
+});
+
+test("backoffice authentication rejects referee users", () => {
+  const request = {
+    user: { userId: "referee-1", role: "referee" }
+  } as Request;
+  let nextCalled = false;
+
+  assert.throws(
+    () => {
+      requireBackofficeUser(request, {} as Response, (() => {
+        nextCalled = true;
+      }) as NextFunction);
+    },
+    (error: unknown) => error instanceof ApiError && error.statusCode === 403
   );
   assert.equal(nextCalled, false);
 });

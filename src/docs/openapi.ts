@@ -57,7 +57,7 @@ export const openApiSpec = {
             properties: {
               id: { type: "string" },
               email: { type: "string", format: "email" },
-              role: { type: "string", enum: ["admin", "coach", "staff"] }
+              role: { type: "string", enum: ["admin", "coach", "staff", "referee"] }
             }
           }
         }
@@ -242,7 +242,7 @@ export const openApiSpec = {
         properties: {
           id: { type: "string" },
           email: { type: "string", format: "email" },
-          role: { type: "string", enum: ["admin", "coach", "staff"] }
+          role: { type: "string", enum: ["admin", "coach", "staff", "referee"] }
         }
       },
       UserWriteRequest: {
@@ -250,7 +250,7 @@ export const openApiSpec = {
         properties: {
           email: { type: "string", format: "email" },
           password: { type: "string", minLength: 8 },
-          role: { type: "string", enum: ["admin", "coach", "staff"] }
+          role: { type: "string", enum: ["admin", "coach", "staff", "referee"] }
         }
       },
       RefereeSessionRequest: {
@@ -463,6 +463,34 @@ export const openApiSpec = {
               }
             }
           }
+        }
+      }
+    },
+    "/api/auth/referee/login": {
+      post: {
+        tags: ["Auth"],
+        summary: "Login referee",
+        requestBody: {
+          required: true,
+          content: { "application/json": { schema: { $ref: "#/components/schemas/LoginRequest" } } }
+        },
+        responses: {
+          "200": { description: "Login successful", content: { "application/json": { schema: { $ref: "#/components/schemas/AuthResponse" } } } },
+          "401": { description: "Invalid credentials" }
+        }
+      }
+    },
+    "/api/auth/referee/register": {
+      post: {
+        tags: ["Auth"],
+        summary: "Register referee",
+        requestBody: {
+          required: true,
+          content: { "application/json": { schema: { $ref: "#/components/schemas/LoginRequest" } } }
+        },
+        responses: {
+          "201": { description: "Referee account created" },
+          "409": { description: "Email already in use" }
         }
       }
     },

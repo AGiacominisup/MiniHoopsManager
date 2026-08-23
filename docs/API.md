@@ -22,8 +22,10 @@ OpenAPI document at `https://minihoopsmanager.onrender.com/docs/openapi.json`.
 
 ## Authentication
 
-`POST /auth/login` is public. Account creation is restricted to authenticated administrators
-through the Users API. Every CRUD endpoint requires a JWT:
+`POST /auth/login`, `POST /auth/referee/login` and `POST /auth/referee/register` are public. The
+referee registration creates an account with the `referee` role. Referee accounts can authenticate
+in the scorer app, but cannot access backoffice resources. Staff account creation remains restricted
+to authenticated administrators through the Users API. Every protected endpoint requires a JWT:
 
 ```http
 Authorization: Bearer <token>
@@ -33,7 +35,7 @@ Content-Type: application/json
 User administration endpoints require the `admin` role.
 
 ```ts
-export type UserRole = "admin" | "coach" | "staff";
+export type UserRole = "admin" | "coach" | "staff" | "referee";
 
 export interface AuthResponse {
   message: string;
@@ -61,6 +63,18 @@ POST /auth/login
 
 Returns `200 AuthResponse`. Invalid credentials return `401`.
 
+### Referee registration and login
+
+```http
+POST /auth/referee/register
+POST /auth/referee/login
+```
+
+Both endpoints accept the same `{ email, password }` payload as the standard login. Registration
+returns `201` with the created user (without a token); login returns `200 AuthResponse`. A referee
+account receives `403` on every backoffice resource. To submit match statistics, the scorer still
+exchanges a court access code through the referee session flow described below.
+
 ## Authorization Matrix
 
 | Resource | Read | Create, update, delete |
@@ -73,9 +87,9 @@ Returns `200 AuthResponse`. Invalid credentials return `401`.
 | Court access codes | Any authenticated user (status only) | `admin`, `staff` |
 | Users | `admin` | `admin` |
 
-Referee sessions are a **separate** kind of credential, not a role. A referee token is rejected by
-every endpoint in this table except the ones under `/referee`, and a user token is rejected by
-`/referee`. See [Referee sessions](#referee-sessions).
+Referee sessions are a **separate** kind of credential from referee user accounts. A court-scoped
+referee session token is rejected by every endpoint in this table except the ones under `/referee`,
+and a user token is rejected by `/referee`. See [Referee sessions](#referee-sessions).
 
 ## Common Responses
 
@@ -465,6 +479,7 @@ export interface Match {
 | `PATCH` | `/matches/:id` | `{ message, match }` |
 | `DELETE` | `/matches/:id` | `{ message }` |
 | `POST` | `/matches/:id/assign` | `{ message, match }` |
+| `POST` | `/tournaments/:id/courts/:courtId/assign-next` | `{ match: Match | null }` |
 | `POST` | `/matches/:id/start` | `{ message, match }` |
 | `POST` | `/matches/:id/complete` | `{ message, match, nextMatch, idempotent }` |
 
@@ -495,6 +510,99 @@ To let the backend pick instead of choosing a match, use
 first playable match, preferring the ones with the fewest players from the match that just ended. It
 returns `{ match: null }` when nothing is currently playable. Completing a match runs the same
 selection automatically on the freed court and returns the reservation as `nextMatch`.
+
+### Frontend court workflow
+
+The frontend should treat court assignment and match start as two separate actions. Assignment is a
+reservation; it does not mean that the game has started. The state machine for generated qualification
+matches is:
+
+```text
+queued --assign--> ready --start--> in_progress --complete/report--> completed
+                         ^                                      |
+                         |                                      +--> nextMatch: ready | null
+                         +---------- next court reservation ----+
+```
+
+The normal staff/operator flow is:
+
+1. Load `GET /matches?tournamentId=:id&phase=qualification&status=queued` and display the matches in
+   `queuePosition` order. Use `availability.playable` to enable the assignment action and show
+   `busyRegistrationIds` when it is false.
+2. When a court is free, either call `POST /matches/:matchId/assign` with the selected `courtId`, or
+   call `POST /tournaments/:id/courts/:courtId/assign-next` and let the backend choose.
+3. Refresh the match list. The assigned match is now `ready`, has the selected `courtId`, and its six
+   players are considered busy. The operator can show a "ready to start" state on the court.
+4. When play begins, call `POST /matches/:matchId/start`. The match becomes `in_progress`.
+5. When play ends, prefer submitting a match report. A report completes the match and automatically
+   reserves the next compatible match on the same court. For the paper/manual fallback, call
+   `POST /matches/:matchId/complete` with `scoreA` and `scoreB`; this endpoint requires the match to
+   be `in_progress` and also returns the next reservation.
+
+The assignment response has this shape:
+
+```ts
+export interface AssignMatchResponse {
+  message: "Match assigned";
+  match: Match; // status is "ready", courtId is not null
+}
+
+export interface AssignNextResponse {
+  match: Match | null; // null means no compatible queued match exists now
+}
+```
+
+`assign-next` is safe to call whenever a court is free. If the court already has a `ready` match, it
+returns that reservation. If it has an `in_progress` or manually `scheduled` match, it returns `409`.
+The endpoint chooses the first compatible queued match, but among compatible matches it prefers the
+ones sharing the fewest players with the last completed match, then uses `queuePosition` as the tie
+breaker. This gives players a break without making the frontend reproduce scheduling rules.
+
+The `availability` field is only a read-time hint. Two operators can read the same playable match at
+the same time, so the backend repeats the court and player checks inside a transaction. The frontend
+must handle these responses by refreshing the queued list instead of retrying the same assignment
+blindly:
+
+| Status | Meaning | Frontend action |
+| --- | --- | --- |
+| `200` | Match reserved or already reserved on the same court | Update the court and match views |
+| `404` | Match, tournament, or enabled court not found | Refresh tournament data and show an error |
+| `409` | Court occupied, match no longer queued, players busy, or concurrent assignment | Refresh matches and let the operator choose again |
+
+After every assignment, start, completion, or report submission, refresh at least the affected court
+and the queued matches. A polling interval of 5-10 seconds is appropriate for an operator dashboard;
+the response from the action itself should be applied immediately so the UI does not wait for the next
+poll.
+
+### Starting from the referee tablet
+
+The referee tablet uses the court-scoped referee session rather than a staff user token. After pairing,
+poll `GET /referee/context` for the current match on that court. The tablet may call
+`POST /referee/matches/:id/start` to move its assigned `ready` match to `in_progress`; it cannot assign
+matches to courts. The session remains bound to the court when the backend reserves `nextMatch`, so the
+tablet polls the same context endpoint and receives the next `ready` match without pairing again.
+
+The context workflow is:
+
+```ts
+const context = await apiRequest<{
+  tournament: { _id: string; name: string; status: TournamentStatus; winPoints: number };
+  court: { _id: string; name: string };
+  match: Match | null; // ready or in_progress on this court
+  report: {
+    submitted: true;
+    revision: number;
+    submittedAt: string;
+    scoreA: number;
+    scoreB: number;
+  } | null;
+}>("/referee/context", {}, refereeToken);
+```
+
+If `match` is `null`, the court is idle. After a report is accepted, use the returned `nextMatch` when
+present for an immediate UI update, then poll `GET /referee/context` to confirm the court state. A
+`401` means that the referee session is invalid or revoked; keep any offline report payload and send
+the user back to pairing rather than discarding the match data.
 
 Create payload:
 
@@ -818,7 +926,8 @@ as the better evidence: it updates the score and the standings without touching 
 
 ## Users
 
-Only admins can access these endpoints. Password hashes are never returned.
+Only admins can access these endpoints. Password hashes are never returned. The `referee` role can
+also be created here, but public referee registration is available through `/auth/referee/register`.
 
 ```ts
 export interface User {

@@ -4,7 +4,7 @@ import jwt from "jsonwebtoken";
 import { jwtConfig } from "../../config/jwt";
 import { ApiError } from "../../utils/ApiError";
 import { UserModel } from "../users/user.model";
-import { loginSchema } from "./auth.validation";
+import { loginSchema, refereeRegistrationSchema } from "./auth.validation";
 
 const signToken = (userId: string, role: string): string => {
   return jwt.sign({ userId, role }, jwtConfig.secret, {
@@ -31,6 +31,50 @@ export const login = async (req: Request, res: Response): Promise<void> => {
   res.status(200).json({
     message: "Login successful",
     token,
+    user: {
+      id: String(user._id),
+      email: user.email,
+      role: user.role
+    }
+  });
+};
+
+export const loginReferee = async (req: Request, res: Response): Promise<void> => {
+  const body = loginSchema.parse(req.body);
+  const user = await UserModel.findOne({ email: body.email.toLowerCase(), role: "referee" });
+
+  if (!user || !(await bcrypt.compare(body.password, user.passwordHash))) {
+    throw new ApiError(401, "Invalid credentials");
+  }
+
+  const token = signToken(String(user._id), user.role);
+
+  res.status(200).json({
+    message: "Login successful",
+    token,
+    user: {
+      id: String(user._id),
+      email: user.email,
+      role: user.role
+    }
+  });
+};
+
+export const registerReferee = async (req: Request, res: Response): Promise<void> => {
+  const body = refereeRegistrationSchema.parse(req.body);
+  const existing = await UserModel.exists({ email: body.email });
+  if (existing) {
+    throw new ApiError(409, "Email already in use");
+  }
+
+  const user = await UserModel.create({
+    email: body.email,
+    passwordHash: await bcrypt.hash(body.password, 10),
+    role: "referee"
+  });
+
+  res.status(201).json({
+    message: "Referee account created",
     user: {
       id: String(user._id),
       email: user.email,

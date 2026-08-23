@@ -78,3 +78,5 @@ export const requireRole = (allowedRoles: UserRole[]) => {
     next();
   };
 };
+
+export const requireBackofficeUser = requireRole(["admin", "coach", "staff"]);

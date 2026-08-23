@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { requireAuth, requireBackofficeUser } from "../middleware/auth";
 import { authRouter } from "../modules/auth/auth.routes";
 import {
   courtAccessRouter,
@@ -18,12 +19,14 @@ apiRouter.get("/health", (_req, res) => {
 });
 
 apiRouter.use("/auth", authRouter);
+apiRouter.use("/referee", refereeSessionRouter);
+apiRouter.use("/referee", refereeRouter);
+
+apiRouter.use(requireAuth, requireBackofficeUser);
 apiRouter.use("/tournaments", tournamentRouter);
 apiRouter.use("/tournaments", courtAccessRouter);
 apiRouter.use("/players", playerRouter);
 apiRouter.use("/registrations", registrationRouter);
 apiRouter.use("/matches", matchRouter);
 apiRouter.use("/matches", matchReportRouter);
-apiRouter.use("/referee", refereeSessionRouter);
-apiRouter.use("/referee", refereeRouter);
 apiRouter.use("/users", userRouter);

@@ -3,7 +3,7 @@ import { z } from "zod";
 const userFields = {
   email: z.string().email().transform((value) => value.toLowerCase()),
   password: z.string().min(8),
-  role: z.enum(["admin", "coach", "staff"])
+  role: z.enum(["admin", "coach", "staff", "referee"])
 };
 
 export const createUserSchema = z.object(userFields);
