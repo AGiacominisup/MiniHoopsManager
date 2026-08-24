@@ -29,9 +29,6 @@ export const openApiSpec = {
         scheme: "bearer",
         bearerFormat: "JWT"
       },
-      // A court-scoped token obtained from POST /api/referee/session. It is not
-      // interchangeable with bearerAuth: user routes reject it and referee
-      // routes reject a user token.
       refereeAuth: {
         type: "http",
         scheme: "bearer",
@@ -770,35 +767,6 @@ export const openApiSpec = {
         responses: { "200": { description: "Completed match, next ready match and idempotency flag" }, "409": { description: "Invalid transition or changed result" } }
       }
     },
-    "/api/tournaments/{id}/access-codes": {
-      get: {
-        tags: ["Referee"], summary: "List the court access code status of a tournament", security: [{ bearerAuth: [] }],
-        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
-        responses: { "200": { description: "Court access status list, never the codes themselves", content: { "application/json": { schema: { type: "object", properties: { courtAccesses: { type: "array", items: { $ref: "#/components/schemas/CourtAccess" } } } } } } } }
-      }
-    },
-    "/api/tournaments/{id}/courts/{courtId}/access-code": {
-      parameters: [
-        { name: "id", in: "path", required: true, schema: { type: "string" } },
-        { name: "courtId", in: "path", required: true, schema: { type: "string" } }
-      ],
-      post: {
-        tags: ["Referee"],
-        summary: "Create or rotate the access code of a court",
-        description: "Returns the plaintext code exactly once. Calling it again rotates the code and unpairs every device using the previous one, which requires force=true while devices are paired.",
-        security: [{ bearerAuth: [] }],
-        parameters: [{ name: "force", in: "query", required: false, schema: { type: "boolean" }, description: "Rotate even though devices are currently paired" }],
-        responses: {
-          "201": { description: "Code created; the plaintext code is in the response and is not retrievable again" },
-          "404": { description: "Tournament not found, or not an enabled court of the tournament" },
-          "409": { description: "Devices are paired and force was not set, or the tournament is completed" }
-        }
-      },
-      delete: {
-        tags: ["Referee"], summary: "Revoke the access code of a court", security: [{ bearerAuth: [] }],
-        responses: { "200": { description: "Code revoked and every paired device unpaired" }, "404": { description: "Court access code not found" } }
-      }
-    },
     "/api/tournaments/{id}/recompute-aggregates": {
       post: {
         tags: ["Registrations"],
@@ -809,34 +777,51 @@ export const openApiSpec = {
         responses: { "200": { description: "Aggregates recomputed" }, "403": { description: "Forbidden" } }
       }
     },
-    "/api/referee/session": {
-      post: {
-        tags: ["Referee"],
-        summary: "Trade a court access code for a scoped referee token",
-        description: "Public. The returned token works only on /api/referee endpoints and is refused everywhere else.",
-        requestBody: { required: true, content: { "application/json": { schema: { $ref: "#/components/schemas/RefereeSessionRequest" } } } },
-        responses: {
-          "200": { description: "Session issued", content: { "application/json": { schema: { $ref: "#/components/schemas/RefereeSessionResponse" } } } },
-          "400": { description: "Malformed code" },
-          "401": { description: "Invalid court access code" },
-          "429": { description: "Too many court code attempts" }
-        }
+    "/api/referee/tournaments": {
+      get: {
+        tags: ["Referee"], summary: "List tournaments and courts for the scorer app", security: [{ bearerAuth: [] }],
+        responses: { "200": { description: "Tournaments with courts" }, "403": { description: "Referee role required" } }
       }
     },
-    "/api/referee/context": {
+    "/api/referee/tournaments/{id}/matches": {
       get: {
-        tags: ["Referee"],
-        summary: "Read the current match on the bound court",
-        description: "Bootstrap and poll endpoint of the scorekeeper app. Returns match: null while the court is idle.",
-        security: [{ refereeAuth: [] }],
-        responses: { "200": { description: "Tournament, court, current match with its six players, and the report state" }, "401": { description: "Invalid token or revoked court session" } }
+        tags: ["Referee"], summary: "List incomplete matches assigned to courts", security: [{ bearerAuth: [] }],
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+        responses: { "200": { description: "Matches and the referee's availability requests" }, "403": { description: "Referee role required" } }
+      }
+    },
+    "/api/referee/matches/{id}/availability": {
+      post: {
+        tags: ["Referee"], summary: "Offer to referee a match", security: [{ bearerAuth: [] }],
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+        responses: { "200": { description: "Availability recorded" }, "409": { description: "Match cannot accept referees" } }
+      },
+      delete: {
+        tags: ["Referee"], summary: "Withdraw availability", security: [{ bearerAuth: [] }],
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+        responses: { "200": { description: "Availability withdrawn" }, "409": { description: "Selected referee cannot withdraw" } }
+      }
+    },
+    "/api/matches/{id}/referee-availability": {
+      get: {
+        tags: ["Referee"], summary: "List pending referee availabilities", security: [{ bearerAuth: [] }],
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+        responses: { "200": { description: "Pending availabilities" }, "403": { description: "Forbidden" } }
+      }
+    },
+    "/api/matches/{id}/referee-assignment": {
+      post: {
+        tags: ["Referee"], summary: "Select a referee for a match", security: [{ bearerAuth: [] }],
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+        requestBody: { required: true, content: { "application/json": { schema: { type: "object", required: ["refereeUserId"], properties: { refereeUserId: { type: "string" } } } } } },
+        responses: { "200": { description: "Referee selected" }, "404": { description: "Pending availability not found" }, "409": { description: "Match cannot be assigned" } }
       }
     },
     "/api/referee/matches/{id}/start": {
       post: {
-        tags: ["Referee"], summary: "Start the match on the bound court", security: [{ refereeAuth: [] }],
+        tags: ["Referee"], summary: "Start an assigned match", security: [{ bearerAuth: [] }],
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
-        responses: { "200": { description: "Match started" }, "403": { description: "Match does not belong to the bound court" }, "409": { description: "Match is not ready" } }
+        responses: { "200": { description: "Match started" }, "403": { description: "Referee is not assigned to this match" }, "409": { description: "Match is not ready" } }
       }
     },
     "/api/referee/matches/{id}/report": {
@@ -844,14 +829,14 @@ export const openApiSpec = {
         tags: ["Referee"],
         summary: "Submit the box score and complete the match",
         description: "Single submission at the end of the game. Replaying the same submissionId returns 200 with idempotent: true. Attributed points below the reported score are accepted and returned as unattributedPoints; above it they are refused.",
-        security: [{ refereeAuth: [] }],
+        security: [{ bearerAuth: [] }],
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
         requestBody: { required: true, content: { "application/json": { schema: { $ref: "#/components/schemas/MatchReportSubmitRequest" } } } },
         responses: {
           "201": { description: "Report stored, match completed and the next match reserved on the court" },
           "200": { description: "Idempotent replay, or a report accepted for an already completed match" },
           "400": { description: "Invalid payload, a draw, over-attribution, or a player outside the match" },
-          "403": { description: "Match does not belong to the bound court" },
+          "403": { description: "Referee is not assigned to this match" },
           "409": { description: "A different report exists, or the match cannot be reported" }
         }
       }

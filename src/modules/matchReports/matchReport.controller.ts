@@ -3,6 +3,7 @@ import { ApiError } from "../../utils/ApiError";
 import { idParamsSchema } from "../../utils/validation";
 import { MatchModel } from "../matches/match.model";
 import { startMatch } from "../matches/matchQueue.service";
+import { assertAssignedReferee } from "../matches/matchReferee.service";
 import {
   assertMatchBelongsToScope,
   correctMatchReport,
@@ -87,6 +88,41 @@ export const submitStaffMatchReport = async (req: Request, res: Response): Promi
     submittedBy: { kind: "user", userId }
   });
 
+  res.status(result.idempotent || result.lateReport ? 200 : 201).json({
+    message: result.lateReport
+      ? "Match report recorded for an already completed match"
+      : "Match report submitted",
+    report: result.report,
+    match: result.match,
+    nextMatch: result.nextMatch,
+    warnings: result.warnings,
+    idempotent: result.idempotent
+  });
+};
+
+export const startAssignedRefereeMatch = async (req: Request, res: Response): Promise<void> => {
+  const { id } = idParamsSchema.parse(req.params);
+  await assertAssignedReferee(id, requireUserId(req));
+  const match = await startMatch(id);
+  res.status(200).json({ message: "Match started", match });
+};
+
+export const submitAssignedRefereeMatchReport = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  const { id } = idParamsSchema.parse(req.params);
+  const body = submitMatchReportSchema.parse(req.body);
+  const submitterId = requireUserId(req);
+  const assignedMatch = await assertAssignedReferee(id, submitterId);
+  if (assignedMatch.status === "completed") {
+    throw new ApiError(409, "Completed matches cannot be reported by the referee app");
+  }
+  const result = await submitMatchReport({
+    matchId: id,
+    body,
+    submittedBy: { kind: "user", userId: submitterId }
+  });
   res.status(result.idempotent || result.lateReport ? 200 : 201).json({
     message: result.lateReport
       ? "Match report recorded for an already completed match"

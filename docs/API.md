@@ -72,8 +72,8 @@ POST /auth/referee/login
 
 Both endpoints accept the same `{ email, password }` payload as the standard login. Registration
 returns `201` with the created user (without a token); login returns `200 AuthResponse`. A referee
-account receives `403` on every backoffice resource. To submit match statistics, the scorer still
-exchanges a court access code through the referee session flow described below.
+account receives `403` on every backoffice resource. The scorer uses the returned user token on the
+referee endpoints and can operate only matches assigned to that user.
 
 ## Authorization Matrix
 
@@ -83,13 +83,11 @@ exchanges a court access code through the referee session flow described below.
 | Players | Any authenticated user | `admin`, `staff` |
 | Registrations | Any authenticated user | `admin`, `staff` |
 | Matches | Any authenticated user | `admin`, `staff` |
-| Match reports | Any authenticated user | `admin`, `staff`, or a referee session for its own court |
-| Court access codes | Any authenticated user (status only) | `admin`, `staff` |
+| Match reports | Any authenticated user | `admin`, `staff`, or the selected referee for that match |
 | Users | `admin` | `admin` |
 
-Referee sessions are a **separate** kind of credential from referee user accounts. A court-scoped
-referee session token is rejected by every endpoint in this table except the ones under `/referee`,
-and a user token is rejected by `/referee`. See [Referee sessions](#referee-sessions).
+Referee endpoints require a normal user JWT with role `referee`. A referee can request availability
+for an assigned-court match, but only the referee selected by staff can start or report it.
 
 ## Common Responses
 
@@ -574,35 +572,12 @@ and the queued matches. A polling interval of 5-10 seconds is appropriate for an
 the response from the action itself should be applied immediately so the UI does not wait for the next
 poll.
 
-### Starting from the referee tablet
+### Starting from the scorer app
 
-The referee tablet uses the court-scoped referee session rather than a staff user token. After pairing,
-poll `GET /referee/context` for the current match on that court. The tablet may call
-`POST /referee/matches/:id/start` to move its assigned `ready` match to `in_progress`; it cannot assign
-matches to courts. The session remains bound to the court when the backend reserves `nextMatch`, so the
-tablet polls the same context endpoint and receives the next `ready` match without pairing again.
-
-The context workflow is:
-
-```ts
-const context = await apiRequest<{
-  tournament: { _id: string; name: string; status: TournamentStatus; winPoints: number };
-  court: { _id: string; name: string };
-  match: Match | null; // ready or in_progress on this court
-  report: {
-    submitted: true;
-    revision: number;
-    submittedAt: string;
-    scoreA: number;
-    scoreB: number;
-  } | null;
-}>("/referee/context", {}, refereeToken);
-```
-
-If `match` is `null`, the court is idle. After a report is accepted, use the returned `nextMatch` when
-present for an immediate UI update, then poll `GET /referee/context` to confirm the court state. A
-`401` means that the referee session is invalid or revoked; keep any offline report payload and send
-the user back to pairing rather than discarding the match data.
+After login, the referee loads the tournament and court list, then requests availability for a match
+already assigned to a court. Once staff selects the referee, `GET /referee/matches/:id` returns the
+match. The referee can then start it and submit its report. A new match on the same court requires a
+new availability request and staff selection.
 
 Create payload:
 
@@ -641,118 +616,43 @@ There must be exactly two teams, one `A` and one `B`, with exactly three distinc
 each. Every player snapshot requires `jerseyNumber` or `name`. The court, optional final group,
 and all registrations must belong to the selected tournament.
 
-## Referee sessions
+## Referee scorer flow
 
-The scorekeeper app is a separate frontend, used by one scorekeeper per court. There is no account:
-staff generates a **court access code** and the tablet trades it for a token scoped to that tournament
-and that court.
+The scorer app uses the existing referee account and JWT login. The referee is not authenticated by a
+shared court code. A referee can see tournaments, courts and matches already assigned to a court, but
+can operate a match only after staff selects that referee for it.
 
-The token is bound to the **court, not to the match**. When a match completes and the backend reserves
-the next one on that court, the same session keeps working — the tablet polls `GET /referee/context`
-and picks up whatever is currently on its court.
+### Scorer endpoints
 
-```ts
-export interface RefereeSession {
-  token: string;
-  expiresAt: string;
-  tournament: { _id: string; name: string; status: TournamentStatus };
-  court: { _id: string; name: string };
-}
+  | Method | Path | Role | Response |
+  | --- | --- | --- | --- |
+  | `POST` | `/auth/referee/login` | public | `{ token, user }` |
+  | `GET` | `/referee/tournaments` | `referee` | `{ tournaments }` with courts |
+  | `GET` | `/referee/tournaments/:id/matches` | `referee` | `{ matches }` with own availability |
+  | `POST` | `/referee/matches/:id/availability` | `referee` | `{ availability }` |
+  | `DELETE` | `/referee/matches/:id/availability` | `referee` | `{ availability }` |
+  | `GET` | `/referee/matches/:id` | `referee` | `{ match }`, only when selected |
+  | `POST` | `/referee/matches/:id/start` | selected `referee` | `{ message, match }` |
+| `POST` | `/referee/matches/:id/report` | selected `referee` | report result and `nextMatch` |
 
-export interface CourtAccess {
-  tournamentId: string;
-  courtId: string;
-  courtName: string;
-  hasActiveCode: boolean;
-  codeLast4: string;      // for the staff UI; the code itself is never returned again
-  tokenVersion: number;
-  issuedTokenCount: number;
-  lastUsedAt: string | null;
-  revokedAt: string | null;
-  createdAt: string;
-  updatedAt: string;
-}
-```
-
-### Managing codes (staff)
-
-| Method | Path | Role | Response |
-| --- | --- | --- | --- |
-| `POST` | `/tournaments/:id/courts/:courtId/access-code` | `admin`, `staff` | `{ message, code, courtAccess, unpairedDevices }` |
-| `GET` | `/tournaments/:id/access-codes` | authenticated | `{ courtAccesses: CourtAccess[] }` |
-| `DELETE` | `/tournaments/:id/courts/:courtId/access-code` | `admin`, `staff` | `{ message }` |
-
-`POST` returns the plaintext `code` — formatted as `XXXX-XXXX` — **exactly once**. It is stored only as
-a keyed hash and cannot be retrieved again; if it is lost, issue a new one.
-
-Calling `POST` again **is** rotation, and rotation unpairs every tablet already using that court's code.
-Because that would strand a scorekeeper mid-match, it is refused with `409` while the court has paired
-devices unless you repeat the call with `?force=true`. The response reports how many devices were
-unpaired.
-
-Codes can be issued and rotated at any time during play: they are unrelated to the court lock that
-freezes court composition when the tournament leaves `draft`. The only refusal is a `completed`
-tournament.
-
-| Status | Meaning |
-| --- | --- |
-| `201` | Code created or rotated |
-| `404` | Tournament not found, or the court is not an enabled court of the tournament |
-| `409` | `Court has N paired device(s); repeat with force=true to rotate the code` |
-| `409` | `Tournament is completed` |
-
-### Pairing a tablet
+Availability can be requested only for an incomplete match already assigned to a court. Staff sees
+the pending requests with `GET /matches/:id/referee-availability` and selects one with:
 
 ```http
-POST /api/referee/session
-{ "code": "2345-6789" }
+POST /api/matches/:id/referee-assignment
+{ "refereeUserId": "66b000000000000000000011" }
 ```
 
-Public — the only unauthenticated endpoint besides login. Separators and lower case are accepted.
-Returns `200 RefereeSession`.
+Only one referee can be selected. The selection is per match and is not inherited by the next match.
+The selected referee is the only referee allowed to read, start and report that match; another referee
+receives `403`.
 
-| Status | Meaning |
-| --- | --- |
-| `200` | Session issued |
-| `400` | The code is not 8 characters |
-| `401` | `Invalid court access code` — unknown, revoked, or the tournament is not accepting reports |
-| `429` | `Too many court code attempts` — 10 failures lock the caller out for 15 minutes |
+### Starting from the scorer app
 
-`401` is deliberately the same answer for every failure, so nothing reveals that a code exists.
-
-Use the returned `token` as an ordinary `Authorization: Bearer` header on `/referee` endpoints **only**.
-It is not a user token: every other endpoint rejects it with `401`. Conversely a staff token is rejected
-by `/referee`.
-
-The session dies when the code is rotated or revoked, at which point every `/referee` call answers
-`401 Court session has been revoked`.
-
-### Reading the court state
-
-```http
-GET /api/referee/context
-```
-
-```ts
-{
-  tournament: { _id, name, status, winPoints },
-  court: { _id, name },
-  match: Match | null,               // the ready or in_progress match on this court
-  report: null | { submitted: true; revision: number; submittedAt: string; scoreA: number; scoreB: number }
-}
-```
-
-This is both the bootstrap and the poll (every ~10 s). `match` is `null` when the court is idle, and
-carries the six player snapshots, so no roster call is needed. A non-null `report` tells a tablet that
-recovered after a lost response that its submission already landed.
-
-```http
-POST /api/referee/matches/:id/start
-```
-
-Moves the match from `ready` to `in_progress`. The scorekeeper is the one who knows when tip-off
-happened, so this does not require staff. `409` if the match is not `ready`, `403` if it is not on this
-court.
+After login, the referee loads the tournament and court list, then requests availability for a match
+already assigned to a court. Once staff selects the referee, `GET /referee/matches/:id` returns the
+match. The referee can then start it and submit its report. A new match on the same court requires a
+new availability request and staff selection.
 
 ## Match reports
 
@@ -832,7 +732,7 @@ export interface MatchReport {
 
 | Method | Path | Auth | Response |
 | --- | --- | --- | --- |
-| `POST` | `/referee/matches/:id/report` | referee session | `{ message, report, match, nextMatch, warnings, idempotent }` |
+| `POST` | `/referee/matches/:id/report` | selected referee | `{ message, report, match, nextMatch, warnings, idempotent }` |
 | `GET` | `/matches/:id/report` | authenticated | `{ report }` |
 | `POST` | `/matches/:id/report` | `admin`, `staff` | same as the referee submit |
 | `PUT` | `/matches/:id/report` | `admin`, `staff` | `{ message, report, match, warnings }` |

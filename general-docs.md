@@ -994,39 +994,28 @@ What is recorded:
 - optionally, at the end, two subjective awards: **MVP** and **fair play** — the second one is
   deliberately not about performance, but about behaviour.
 
-## 22.1 One scorekeeper per court, paired with a code
+## 22.1 Authenticated referee assignment
 
-The scorekeeper is a volunteer, not a user of the system: there is no account, no email, no password.
-
-Staff generates a **court access code** and the tablet trades it for a token scoped to that
-tournament and that court:
+The scorekeeper is an authenticated `referee` user. The scorer app uses the existing email/password
+login and receives the normal user JWT:
 
 ```text
-POST /tournaments/{id}/courts/{courtId}/access-code   (staff)  → the code, shown once
-POST /referee/session                                 (public) → a scoped token
+POST /auth/referee/login                         (public) → user JWT
+GET /referee/tournaments                         (referee) → tournaments and courts
+GET /referee/tournaments/{id}/matches            (referee) → assigned-court matches
+POST /referee/matches/{id}/availability          (referee) → pending availability
+POST /matches/{id}/referee-assignment            (staff)   → selected referee
 ```
 
-The session is bound to the **court, not to the game**. When a game completes and the engine reserves
-the next one on that court, the same session keeps working with no re-pairing: the tablet polls
-`GET /referee/context` and picks up whatever is currently on its court.
+The referee can offer availability only after a game has been assigned to a court. Staff opens the
+game in the backoffice, sees pending referees and selects exactly one. The assignment is persisted on
+the game and is valid only for that game; the next game on the same court requires a new selection.
 
-Design points that are load-bearing:
+Only the selected referee can read, start and report the game. A referee who is not selected receives
+`403`, even if they know the game's ID. The scorer app never assigns games to courts.
 
-- **The code is 8 characters** from a 30-symbol alphabet with no ambiguous glyphs (`I`, `L`, `O`, `U`,
-  `0`, `1`), stored only as a keyed HMAC. It is shown to staff exactly once and is not recoverable.
-- **Brute force is bounded by a persistent lockout**, not by the code length: 10 failed attempts per
-  caller lock the exchange endpoint for 15 minutes, counted in MongoDB so the limit survives a restart
-  and holds across instances.
-- **A referee token is not a user token.** It carries no `userId` and no `role`, and `requireAuth`
-  rejects it outright. This matters because most read routes carry `requireAuth` without a role check,
-  so without that rejection a court tablet would be able to read every tournament, player and
-  registration in the system.
-- **Rotating or revoking a code unpairs every tablet on that court** at its next request, through a
-  version counter compared on every call — a stateless token cannot otherwise be withdrawn. Because
-  that would strand a scorekeeper holding an unsent report, rotation refuses to run on a court with
-  paired devices unless it is forced.
-- **Codes are not subject to the court lock.** Courts and configuration freeze when the tournament
-  leaves `draft`, but a code must stay rotatable during play; the two are unrelated concerns.
+The old shared court-code flow is not part of the MVP scorer API. Court assignment and referee
+assignment remain separate concerns: the queue chooses the court, while staff chooses the person.
 
 ## 22.2 Offline first: one submission, at the end
 

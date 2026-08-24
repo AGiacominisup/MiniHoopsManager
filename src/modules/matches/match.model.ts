@@ -29,6 +29,9 @@ export interface MatchDocument {
   queuePosition?: number;
   generationSeed?: string;
   rosterFingerprint?: string;
+  refereeUserId?: Schema.Types.ObjectId | null;
+  refereeAssignedAt?: Date;
+  refereeAssignedBy?: Schema.Types.ObjectId;
   assignedAt?: Date;
   startedAt?: Date;
   completedAt?: Date;
@@ -98,6 +101,9 @@ const matchSchema = new Schema<MatchDocument>(
     queuePosition: { type: Number, min: 0 },
     generationSeed: { type: String },
     rosterFingerprint: { type: String },
+    refereeUserId: { type: Schema.Types.ObjectId, ref: "User", default: null },
+    refereeAssignedAt: { type: Date },
+    refereeAssignedBy: { type: Schema.Types.ObjectId, ref: "User" },
     assignedAt: { type: Date },
     startedAt: { type: Date },
     completedAt: { type: Date }
@@ -110,6 +116,7 @@ const matchSchema = new Schema<MatchDocument>(
 matchSchema.index({ tournamentId: 1 });
 matchSchema.index({ tournamentId: 1, phase: 1 });
 matchSchema.index({ tournamentId: 1, finalGroupId: 1 });
+matchSchema.index({ refereeUserId: 1, status: 1 });
 matchSchema.index(
   { tournamentId: 1, phase: 1, queuePosition: 1 },
   { unique: true, partialFilterExpression: { queuePosition: { $type: "number" } } }
