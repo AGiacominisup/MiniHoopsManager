@@ -8,7 +8,7 @@ const matchPlayerSchema = z
     name: z.string().trim().min(1).optional()
   })
   .refine((player) => player.jerseyNumber !== undefined || player.name !== undefined, {
-    message: "Each match player must have either a jersey number or a name"
+    message: "Each match player must have at least a jersey number or a name"
   });
 
 const matchTeamSchema = z.object({

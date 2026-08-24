@@ -18,10 +18,10 @@ const validateRegistrationReferences = async (
   tournamentId: string,
   playerId: string,
   finalGroupId?: string | null
-): Promise<{ skillRating?: number }> => {
+): Promise<{ skillRating?: number; jerseyNumber?: number }> => {
   const [tournament, player] = await Promise.all([
     TournamentModel.findById(tournamentId),
-    PlayerModel.findById(playerId).select({ skillRating: 1 }).lean()
+    PlayerModel.findById(playerId).select({ skillRating: 1, jerseyNumber: 1 }).lean()
   ]);
 
   if (!tournament) {
@@ -59,12 +59,15 @@ export const createRegistration = async (req: Request, res: Response): Promise<v
     throw new ApiError(409, "Player is already registered for this tournament");
   }
 
-  // The player's rating is snapshotted unless the caller overrides it for this
-  // tournament, so later edits to the player record leave this roster untouched.
+  // Rating and jersey number are snapshotted unless the caller overrides them
+  // for this tournament, so later edits to the player record leave this roster
+  // untouched. A name-only or number-only player is still valid.
   const skillRating = body.skillRating ?? player.skillRating;
+  const jerseyNumber = body.jerseyNumber ?? player.jerseyNumber;
   const registration = await RegistrationModel.create({
     ...body,
-    ...(skillRating !== undefined && { skillRating })
+    ...(skillRating !== undefined && { skillRating }),
+    ...(jerseyNumber !== undefined && { jerseyNumber })
   });
   res.status(201).json({ message: "Registration created", registration });
 };

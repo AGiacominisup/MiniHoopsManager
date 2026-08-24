@@ -618,7 +618,10 @@ which means:
 
 The resolved rating is also denormalized into the player snapshot of every
 generated game, alongside the jersey number and name, so a game carries the
-strength it was balanced on.
+strength it was balanced on. Display identity requires at least one of name or
+jersey number; when both are known they are both stored, so the scorer can show
+a number even when the child is named, and a nameless player can still be
+identified by jersey.
 
 **Roster identity.** Skill ratings are part of the roster fingerprint used by the
 preview/generate handshake (§16). Editing a rating between preview and generate

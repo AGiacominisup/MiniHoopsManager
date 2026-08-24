@@ -292,8 +292,11 @@ match report, registration and court access code of the tournament is removed in
 and the response `summary` reports how many of each were deleted. Players are never deleted, only their
 registrations for that tournament.
 
-A player can only be registered if they have a name or a jersey number; a nameless player's jersey
-number is copied onto the registration automatically.
+A player can only be registered if they have a name or a jersey number — at least one is required so
+they can be identified. When the player has a jersey number it is always copied onto the
+registration, including when they also have a name, and can later be overridden per tournament.
+Parents may withhold a child's name; some tournaments play without numbered jerseys. When both are
+known, both are stored and returned.
 
 ## Players
 
@@ -456,9 +459,9 @@ export interface MatchAvailability {
 
 export interface MatchPlayer {
   registrationId: string;
-  jerseyNumber?: number;
-  name?: string;
-  skillRating?: number; // the rating the match was balanced on
+  jerseyNumber?: number; // present when known
+  name?: string;         // present when known
+  skillRating?: number;  // the rating the match was balanced on
 }
 
 export interface Match {
@@ -481,6 +484,9 @@ export interface Match {
   updatedAt: string;
 }
 ```
+
+Every `MatchPlayer` requires at least one of `jerseyNumber` or `name`. When both are known they are
+both returned, including on the referee scorer endpoints.
 
 | Method | Path | Response |
 | --- | --- | --- |
@@ -608,17 +614,17 @@ Create payload:
     {
       "side": "A",
       "players": [
-        { "registrationId": "66b000000000000000000101", "jerseyNumber": 4 },
+        { "registrationId": "66b000000000000000000101", "jerseyNumber": 4, "name": "Mario Rossi" },
         { "registrationId": "66b000000000000000000102", "jerseyNumber": 7 },
-        { "registrationId": "66b000000000000000000103", "name": "Mario Rossi" }
+        { "registrationId": "66b000000000000000000103", "name": "Luca Bianchi" }
       ]
     },
     {
       "side": "B",
       "players": [
-        { "registrationId": "66b000000000000000000104", "jerseyNumber": 5 },
+        { "registrationId": "66b000000000000000000104", "jerseyNumber": 5, "name": "Anna Verdi" },
         { "registrationId": "66b000000000000000000105", "jerseyNumber": 8 },
-        { "registrationId": "66b000000000000000000106", "name": "Luca Bianchi" }
+        { "registrationId": "66b000000000000000000106", "name": "Giorgio Neri" }
       ]
     }
   ]
@@ -626,8 +632,14 @@ Create payload:
 ```
 
 There must be exactly two teams, one `A` and one `B`, with exactly three distinct registrations
-each. Every player snapshot requires `jerseyNumber` or `name`. The court, optional final group,
-and all registrations must belong to the selected tournament.
+each. Every player snapshot requires at least one of `jerseyNumber` or `name`. When both are known
+they are both stored and returned — a numbered unnamed player and a named player without a jersey
+are both valid. The court, optional final group, and all registrations must belong to the selected
+tournament.
+
+Generated qualification matches follow the same rule: the snapshot copies the registration jersey
+number (falling back to the player record) and the player's display name, so the scorer and the
+backoffice see both fields whenever both exist.
 
 ## Referee scorer flow
 

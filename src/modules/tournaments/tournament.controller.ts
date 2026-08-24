@@ -178,8 +178,8 @@ export const bulkRegisterPlayers = async (req: Request, res: Response): Promise<
     players
       .filter((player) => !existingPlayerIds.has(String(player._id)))
       .map((player) => {
-        // A registration is only valid with a jersey number or a named player, so
-        // a nameless player's number is carried over instead of failing to save.
+        // At least one of name or jersey number is required. When both exist
+        // both are kept, so the scorer can show a number even for a named child.
         const hasName = Boolean(player.firstName || player.lastName);
         if (!hasName && player.jerseyNumber === undefined) {
           throw new ApiError(
@@ -190,10 +190,10 @@ export const bulkRegisterPlayers = async (req: Request, res: Response): Promise<
         return {
           tournamentId: id,
           playerId: player._id,
-          ...(!hasName && { jerseyNumber: player.jerseyNumber }),
-          // Unlike the jersey number, the rating is always snapshotted: it freezes
-          // the player's strength for this tournament and can then be overridden
-          // per tournament without touching the player record.
+          ...(player.jerseyNumber !== undefined && { jerseyNumber: player.jerseyNumber }),
+          // The rating is always snapshotted: it freezes the player's strength
+          // for this tournament and can then be overridden per tournament
+          // without touching the player record.
           ...(player.skillRating !== undefined && { skillRating: player.skillRating })
         };
       })

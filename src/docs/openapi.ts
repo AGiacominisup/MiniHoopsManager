@@ -183,7 +183,12 @@ export const openApiSpec = {
           _id: { type: "string" },
           tournamentId: { type: "string" },
           playerId: { type: "string" },
-          jerseyNumber: { type: "integer", minimum: 0 },
+          jerseyNumber: {
+            type: "integer",
+            minimum: 0,
+            description:
+              "Snapshot of the player's jersey number taken at registration, and the per-tournament override. Copied even when the player also has a name."
+          },
           skillRating: {
             type: "integer",
             minimum: 0,
@@ -233,8 +238,17 @@ export const openApiSpec = {
                     required: ["registrationId"],
                     properties: {
                       registrationId: { type: "string" },
-                      jerseyNumber: { type: "integer", minimum: 0 },
-                      name: { type: "string" },
+                      jerseyNumber: {
+                        type: "integer",
+                        minimum: 0,
+                        description:
+                          "Present when known. At least one of jerseyNumber or name is required; both are returned when both exist."
+                      },
+                      name: {
+                        type: "string",
+                        description:
+                          "Present when known. Returned together with jerseyNumber when both exist."
+                      },
                       skillRating: { type: "integer", minimum: 0, maximum: 10 }
                     }
                   }

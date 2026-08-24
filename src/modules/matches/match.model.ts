@@ -54,7 +54,7 @@ matchPlayerSnapshotSchema.pre(
     const hasName = Boolean(this.name);
 
     if (!hasJerseyNumber && !hasName) {
-      throw new Error("Each match player must have either a jersey number or a name.");
+      throw new Error("Each match player must have at least a jersey number or a name.");
     }
   }
 );

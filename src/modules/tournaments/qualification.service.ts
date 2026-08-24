@@ -3,6 +3,11 @@ import mongoose, { type ClientSession } from "mongoose";
 import { ApiError } from "../../utils/ApiError";
 import { MatchModel, type MatchDocument } from "../matches/match.model";
 import { PlayerModel } from "../players/player.model";
+import {
+  hasPlayerDisplayIdentity,
+  playerDisplayName,
+  resolveJerseyNumber
+} from "../players/playerIdentity";
 import { RegistrationModel } from "../registrations/registration.model";
 import {
   buildQualificationPlan,
@@ -91,8 +96,12 @@ const loadQualificationContext = async (
   const playersById = new Map(playerDocuments.map((player) => [String(player._id), player]));
   const players = registrations.map((registration): QualificationPlayer => {
     const player = playersById.get(String(registration.playerId));
-    const name = [player?.firstName, player?.lastName].filter(Boolean).join(" ") || undefined;
-    if (registration.jerseyNumber === undefined && !name) {
+    const name = playerDisplayName(player);
+    // Registration jersey number wins as a per-tournament override; the player
+    // record is the fallback so older registrations that only stored a name
+    // still surface the number on generated matches.
+    const jerseyNumber = resolveJerseyNumber(registration.jerseyNumber, player?.jerseyNumber);
+    if (!hasPlayerDisplayIdentity(name, jerseyNumber)) {
       throw new ApiError(409, `Registration ${String(registration._id)} has no display identity`);
     }
     // The registration snapshot wins, so a per-tournament override sticks. Falling
@@ -102,7 +111,7 @@ const loadQualificationContext = async (
     const skillRating = registration.skillRating ?? player?.skillRating;
     return {
       registrationId: String(registration._id),
-      ...(registration.jerseyNumber !== undefined && { jerseyNumber: registration.jerseyNumber }),
+      ...(jerseyNumber !== undefined && { jerseyNumber }),
       ...(name && { name }),
       ...(skillRating !== undefined && { skillRating })
     };

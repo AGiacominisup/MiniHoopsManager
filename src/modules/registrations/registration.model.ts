@@ -78,7 +78,7 @@ registrationSchema.pre("validate", async function (this: HydratedDocument<Regist
 
   if (!player || (!player.firstName && !player.lastName)) {
     throw new Error(
-      "Registration is invalid: either jerseyNumber or the linked player name must be provided."
+      "Registration is invalid: at least one of jerseyNumber or the linked player name must be provided."
     );
   }
 });
