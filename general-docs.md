@@ -996,8 +996,10 @@ What is recorded:
 
 ## 22.1 Authenticated referee assignment
 
-The scorekeeper is an authenticated `referee` user. The scorer app uses the existing email/password
-login and receives the normal user JWT:
+The scorekeeper is an authenticated `referee` user. Public registration requires a unique display
+`name` (used by staff when assigning a referee to a match), plus email and password. Login remains
+email/password and returns that name with the user payload. The scorer app uses the existing
+email/password login and receives the normal user JWT:
 
 ```text
 POST /auth/referee/login                         (public) → user JWT

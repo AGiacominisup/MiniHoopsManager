@@ -2,6 +2,7 @@ import { z } from "zod";
 
 const userFields = {
   email: z.string().email().transform((value) => value.toLowerCase()),
+  name: z.string().trim().min(1).max(80).optional(),
   password: z.string().min(8),
   role: z.enum(["admin", "coach", "staff", "referee"])
 };

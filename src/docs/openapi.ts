@@ -44,6 +44,15 @@ export const openApiSpec = {
           password: { type: "string", minLength: 8, example: "superPassword123" }
         }
       },
+      RefereeRegisterRequest: {
+        type: "object",
+        required: ["email", "password", "name"],
+        properties: {
+          email: { type: "string", format: "email", example: "referee@minihoops.com" },
+          password: { type: "string", minLength: 8, example: "superPassword123" },
+          name: { type: "string", minLength: 1, maxLength: 80, example: "Mario Rossi" }
+        }
+      },
       AuthResponse: {
         type: "object",
         properties: {
@@ -54,6 +63,7 @@ export const openApiSpec = {
             properties: {
               id: { type: "string" },
               email: { type: "string", format: "email" },
+              name: { type: "string", nullable: true, example: "Mario Rossi" },
               role: { type: "string", enum: ["admin", "coach", "staff", "referee"] }
             }
           }
@@ -239,6 +249,7 @@ export const openApiSpec = {
         properties: {
           id: { type: "string" },
           email: { type: "string", format: "email" },
+          name: { type: "string", nullable: true },
           role: { type: "string", enum: ["admin", "coach", "staff", "referee"] }
         }
       },
@@ -246,6 +257,7 @@ export const openApiSpec = {
         type: "object",
         properties: {
           email: { type: "string", format: "email" },
+          name: { type: "string", minLength: 1, maxLength: 80 },
           password: { type: "string", minLength: 8 },
           role: { type: "string", enum: ["admin", "coach", "staff", "referee"] }
         }
@@ -483,11 +495,11 @@ export const openApiSpec = {
         summary: "Register referee",
         requestBody: {
           required: true,
-          content: { "application/json": { schema: { $ref: "#/components/schemas/LoginRequest" } } }
+          content: { "application/json": { schema: { $ref: "#/components/schemas/RefereeRegisterRequest" } } }
         },
         responses: {
           "201": { description: "Referee account created" },
-          "409": { description: "Email already in use" }
+          "409": { description: "Email or name already in use" }
         }
       }
     },
@@ -806,7 +818,7 @@ export const openApiSpec = {
       get: {
         tags: ["Referee"], summary: "List pending referee availabilities", security: [{ bearerAuth: [] }],
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
-        responses: { "200": { description: "Pending availabilities" }, "403": { description: "Forbidden" } }
+        responses: { "200": { description: "Pending availabilities, each populated with referee name and email" }, "403": { description: "Forbidden" } }
       }
     },
     "/api/matches/{id}/referee-assignment": {
@@ -876,7 +888,7 @@ export const openApiSpec = {
       post: {
         tags: ["Users"], summary: "Create a user (admin only)", security: [{ bearerAuth: [] }],
         requestBody: { required: true, content: { "application/json": { schema: { $ref: "#/components/schemas/UserWriteRequest" } } } },
-        responses: { "201": { description: "User created" }, "409": { description: "Email already in use" } }
+        responses: { "201": { description: "User created" }, "409": { description: "Email or name already in use" } }
       }
     },
     "/api/users/{id}": {
@@ -888,7 +900,7 @@ export const openApiSpec = {
       patch: {
         tags: ["Users"], summary: "Update a user (admin only)", security: [{ bearerAuth: [] }],
         requestBody: { required: true, content: { "application/json": { schema: { $ref: "#/components/schemas/UserWriteRequest" } } } },
-        responses: { "200": { description: "User updated" }, "409": { description: "Email already in use" } }
+        responses: { "200": { description: "User updated" }, "409": { description: "Email or name already in use" } }
       },
       delete: {
         tags: ["Users"], summary: "Delete a user (admin only)", security: [{ bearerAuth: [] }],

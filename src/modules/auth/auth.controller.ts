@@ -3,7 +3,7 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { jwtConfig } from "../../config/jwt";
 import { ApiError } from "../../utils/ApiError";
-import { UserModel } from "../users/user.model";
+import { UserModel, type UserDocument } from "../users/user.model";
 import { loginSchema, refereeRegistrationSchema } from "./auth.validation";
 
 const signToken = (userId: string, role: string): string => {
@@ -12,6 +12,13 @@ const signToken = (userId: string, role: string): string => {
     expiresIn: jwtConfig.expiresIn
   });
 };
+
+const serializeAuthUser = (user: UserDocument & { _id: unknown }) => ({
+  id: String(user._id),
+  email: user.email,
+  name: user.name ?? null,
+  role: user.role
+});
 
 export const login = async (req: Request, res: Response): Promise<void> => {
   const body = loginSchema.parse(req.body);
@@ -31,11 +38,7 @@ export const login = async (req: Request, res: Response): Promise<void> => {
   res.status(200).json({
     message: "Login successful",
     token,
-    user: {
-      id: String(user._id),
-      email: user.email,
-      role: user.role
-    }
+    user: serializeAuthUser(user)
   });
 };
 
@@ -52,33 +55,31 @@ export const loginReferee = async (req: Request, res: Response): Promise<void> =
   res.status(200).json({
     message: "Login successful",
     token,
-    user: {
-      id: String(user._id),
-      email: user.email,
-      role: user.role
-    }
+    user: serializeAuthUser(user)
   });
 };
 
 export const registerReferee = async (req: Request, res: Response): Promise<void> => {
   const body = refereeRegistrationSchema.parse(req.body);
-  const existing = await UserModel.exists({ email: body.email });
-  if (existing) {
+  const existingEmail = await UserModel.exists({ email: body.email.toLowerCase() });
+  if (existingEmail) {
     throw new ApiError(409, "Email already in use");
+  }
+
+  const existingName = await UserModel.exists({ name: body.name });
+  if (existingName) {
+    throw new ApiError(409, "Name already in use");
   }
 
   const user = await UserModel.create({
     email: body.email,
+    name: body.name,
     passwordHash: await bcrypt.hash(body.password, 10),
     role: "referee"
   });
 
   res.status(201).json({
     message: "Referee account created",
-    user: {
-      id: String(user._id),
-      email: user.email,
-      role: user.role
-    }
+    user: serializeAuthUser(user)
   });
 };

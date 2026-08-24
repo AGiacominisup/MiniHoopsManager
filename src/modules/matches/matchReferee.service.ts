@@ -75,7 +75,7 @@ export const withdrawRefereeAvailability = async (matchId: string, refereeUserId
 export const listMatchRefereeAvailabilities = async (matchId: string) => {
   await loadMatch(matchId);
   return MatchRefereeAvailabilityModel.find({ matchId, status: "pending" })
-    .populate("refereeUserId", "email")
+    .populate("refereeUserId", "email name")
     .sort({ requestedAt: 1 });
 };
 

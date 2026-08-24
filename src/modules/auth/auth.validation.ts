@@ -5,4 +5,6 @@ export const loginSchema = z.object({
   password: z.string().min(8)
 });
 
-export const refereeRegistrationSchema = loginSchema;
+export const refereeRegistrationSchema = loginSchema.extend({
+  name: z.string().trim().min(1).max(80)
+});

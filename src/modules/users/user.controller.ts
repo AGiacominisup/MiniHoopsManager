@@ -8,6 +8,7 @@ import { createUserSchema, updateUserSchema } from "./user.validation";
 const serializeUser = (user: UserDocument & { _id: unknown }) => ({
   id: user._id,
   email: user.email,
+  name: user.name ?? null,
   role: user.role
 });
 
@@ -17,9 +18,16 @@ export const createUser = async (req: Request, res: Response): Promise<void> => 
   if (existing) {
     throw new ApiError(409, "Email already in use");
   }
+  if (body.name) {
+    const existingName = await UserModel.exists({ name: body.name });
+    if (existingName) {
+      throw new ApiError(409, "Name already in use");
+    }
+  }
 
   const user = await UserModel.create({
     email: body.email,
+    name: body.name,
     passwordHash: await bcrypt.hash(body.password, 10),
     role: body.role
   });
@@ -58,6 +66,14 @@ export const updateUser = async (req: Request, res: Response): Promise<void> => 
       throw new ApiError(409, "Email already in use");
     }
     user.email = body.email;
+  }
+
+  if (body.name && body.name !== user.name) {
+    const existingName = await UserModel.exists({ name: body.name, _id: { $ne: id } });
+    if (existingName) {
+      throw new ApiError(409, "Name already in use");
+    }
+    user.name = body.name;
   }
 
   if (body.password) {

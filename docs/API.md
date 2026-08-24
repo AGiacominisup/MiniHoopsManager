@@ -37,14 +37,17 @@ User administration endpoints require the `admin` role.
 ```ts
 export type UserRole = "admin" | "coach" | "staff" | "referee";
 
+export interface AuthUser {
+  id: string;
+  email: string;
+  name: string | null;
+  role: UserRole;
+}
+
 export interface AuthResponse {
   message: string;
   token: string;
-  user: {
-    id: string;
-    email: string;
-    role: UserRole;
-  };
+  user: AuthUser;
 }
 ```
 
@@ -70,10 +73,20 @@ POST /auth/referee/register
 POST /auth/referee/login
 ```
 
-Both endpoints accept the same `{ email, password }` payload as the standard login. Registration
-returns `201` with the created user (without a token); login returns `200 AuthResponse`. A referee
-account receives `403` on every backoffice resource. The scorer uses the returned user token on the
-referee endpoints and can operate only matches assigned to that user.
+Login accepts `{ email, password }` and returns `200 AuthResponse`, including the referee `name`.
+Registration requires `{ email, password, name }`. `name` is a unique display string used when staff
+assigns a referee to a match. Registration returns `201` with the created user (without a token). A
+duplicate email or name returns `409`. A referee account receives `403` on every backoffice resource.
+The scorer uses the returned user token on the referee endpoints and can operate only matches assigned
+to that user.
+
+```json
+{
+  "email": "referee@example.com",
+  "password": "password123",
+  "name": "Mario Rossi"
+}
+```
 
 ## Authorization Matrix
 
@@ -636,7 +649,8 @@ can operate a match only after staff selects that referee for it.
 | `POST` | `/referee/matches/:id/report` | selected `referee` | report result and `nextMatch` |
 
 Availability can be requested only for an incomplete match already assigned to a court. Staff sees
-the pending requests with `GET /matches/:id/referee-availability` and selects one with:
+the pending requests with `GET /matches/:id/referee-availability` (each populated with the referee
+`name` and `email`) and selects one with:
 
 ```http
 POST /api/matches/:id/referee-assignment
@@ -833,6 +847,7 @@ also be created here, but public referee registration is available through `/aut
 export interface User {
   id: string;
   email: string;
+  name: string | null;
   role: UserRole;
 }
 ```
@@ -845,13 +860,15 @@ export interface User {
 | `PATCH` | `/users/:id` | `{ message, user }` |
 | `DELETE` | `/users/:id` | `{ message }` |
 
-Create payload requires all fields:
+Create payload requires `email`, `password` and `role`. `name` is optional for staff-created users
+and required for public referee registration. When set, it must be unique.
 
 ```json
 {
   "email": "coach@example.com",
   "password": "password123",
-  "role": "coach"
+  "role": "coach",
+  "name": "Mario Rossi"
 }
 ```
 

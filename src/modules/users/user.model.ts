@@ -4,6 +4,7 @@ export type UserRole = "admin" | "coach" | "staff" | "referee";
 
 export interface UserDocument {
   email: string;
+  name?: string;
   passwordHash: string;
   role: UserRole;
 }
@@ -16,6 +17,12 @@ const userSchema = new Schema<UserDocument>(
       unique: true,
       lowercase: true,
       trim: true
+    },
+    name: {
+      type: String,
+      trim: true,
+      unique: true,
+      sparse: true
     },
     passwordHash: {
       type: String,
