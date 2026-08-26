@@ -832,7 +832,7 @@ export const openApiSpec = {
       get: {
         tags: ["Referee"], summary: "List pending referee availabilities", security: [{ bearerAuth: [] }],
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
-        responses: { "200": { description: "Pending availabilities, each populated with referee name and email" }, "403": { description: "Forbidden" } }
+        responses: { "200": { description: "Pending and selected availabilities, each populated with referee name and email" }, "403": { description: "Forbidden" } }
       }
     },
     "/api/matches/{id}/referee-assignment": {

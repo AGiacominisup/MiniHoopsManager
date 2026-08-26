@@ -661,8 +661,8 @@ can operate a match only after staff selects that referee for it.
 | `POST` | `/referee/matches/:id/report` | selected `referee` | report result and `nextMatch` |
 
 Availability can be requested only for an incomplete match already assigned to a court. Staff sees
-the pending requests with `GET /matches/:id/referee-availability` (each populated with the referee
-`name` and `email`) and selects one with:
+pending and selected requests with `GET /matches/:id/referee-availability` (each populated with the
+referee `name` and `email`) and selects one with:
 
 ```http
 POST /api/matches/:id/referee-assignment
