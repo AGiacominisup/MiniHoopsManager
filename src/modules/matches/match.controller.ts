@@ -92,7 +92,9 @@ export const createMatch = async (req: Request, res: Response): Promise<void> =>
 
 export const listMatches = async (req: Request, res: Response): Promise<void> => {
   const query = matchQuerySchema.parse(req.query);
-  const matches = await MatchModel.find(query).sort({ scheduledAt: 1, queuePosition: 1 });
+  const matches = await MatchModel.find(query)
+    .populate("refereeUserId", "email name")
+    .sort({ scheduledAt: 1, queuePosition: 1 });
   const availability = await buildAvailabilityMap(matches);
   res.status(200).json({
     matches: matches.map((match) => ({
@@ -104,7 +106,7 @@ export const listMatches = async (req: Request, res: Response): Promise<void> =>
 
 export const getMatch = async (req: Request, res: Response): Promise<void> => {
   const { id } = idParamsSchema.parse(req.params);
-  const match = await MatchModel.findById(id);
+  const match = await MatchModel.findById(id).populate("refereeUserId", "email name");
 
   if (!match) {
     throw new ApiError(404, "Match not found");
