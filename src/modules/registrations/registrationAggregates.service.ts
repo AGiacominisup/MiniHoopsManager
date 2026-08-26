@@ -2,10 +2,10 @@ import type { ClientSession } from "mongoose";
 import { ApiError } from "../../utils/ApiError";
 import type { MatchDocument, MatchSide } from "../matches/match.model";
 import { MatchModel } from "../matches/match.model";
-import { resolveMatchOutcome } from "../matches/matchQueue.service";
+import { resolveMatchOutcome } from "../matches/matchOutcome";
 import { MatchReportModel, type MatchReportDocument } from "../matchReports/matchReport.model";
-import { loadTournament } from "../tournaments/tournament.guards";
 import { RegistrationModel } from "./registration.model";
+import { computeRankingPoints } from "./rankingFormula";
 
 export interface RegistrationAggregates {
   matchesPlayed: number;
@@ -47,16 +47,15 @@ const sideOf = (match: MatchDocument, registrationId: string): MatchSide | null 
 /**
  * The whole standing of one player, recomputed from scratch.
  *
- * Team numbers come from the match, individual numbers from its report. That
- * layering is deliberate: a match completed by hand has no report, so the match
- * has to stay authoritative for the ranking — which is also what keeps an
- * imprecise attribution from ever distorting a standing.
+ * Team numbers come from the match, individual numbers from its report.
+ * rankingPoints is then derived from those totals: wins, awards, and ceiled
+ * box-score counters. A match completed by hand has no report, so it still
+ * contributes the win and the team scores, and nothing from the box score.
  */
 export const computeAggregates = (
   registrationId: string,
   matches: IdentifiedMatch[],
-  reportsByMatchId: Map<string, MatchReportDocument>,
-  winPoints: number
+  reportsByMatchId: Map<string, MatchReportDocument>
 ): RegistrationAggregates => {
   const aggregates: RegistrationAggregates = { ...EMPTY_AGGREGATES };
 
@@ -75,7 +74,6 @@ export const computeAggregates = (
     aggregates.pointsAllowed += opponentScore;
     if (winnerSide === side) {
       aggregates.wins += 1;
-      aggregates.rankingPoints += winPoints;
     }
 
     const report = reportsByMatchId.get(String(match._id));
@@ -99,11 +97,12 @@ export const computeAggregates = (
     }
   }
 
+  aggregates.rankingPoints = computeRankingPoints(aggregates);
   return aggregates;
 };
 
 /**
- * The only writer of the registration counters on the report paths.
+ * The only writer of the registration counters on the report and completion paths.
  *
  * It $sets rather than $incs, so it is self-healing: a correction that flips the
  * winner needs no reversal logic, and any pre-existing drift for these players
@@ -118,7 +117,6 @@ export const recomputeRegistrationAggregates = async (
     return;
   }
 
-  const tournament = await loadTournament(tournamentId, session);
   const matches = (await MatchModel.find({
     tournamentId,
     status: "completed",
@@ -131,16 +129,11 @@ export const recomputeRegistrationAggregates = async (
   const reportsByMatchId = new Map(reports.map((report) => [String(report.matchId), report]));
 
   const operations = registrationIds.map((registrationId) => {
-    const aggregates = computeAggregates(
-      registrationId,
-      matches,
-      reportsByMatchId,
-      tournament.winPoints
-    );
+    const aggregates = computeAggregates(registrationId, matches, reportsByMatchId);
 
     // Mongoose validators do not run on bulkWrite, so min: 0 would not catch a
     // negative here. A negative total means the computation is wrong, and the
-    // transaction must not commit.
+    // transaction must not commit. rankingPoints is clamped to 0 by the formula.
     for (const [field, value] of Object.entries(aggregates)) {
       if (value < 0) {
         throw new ApiError(

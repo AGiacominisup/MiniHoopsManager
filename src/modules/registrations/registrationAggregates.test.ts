@@ -57,11 +57,11 @@ const reportsFor = (...reports: MatchReportDocument[]) =>
 test("credits the win to the side that actually scored more", () => {
   const match = buildMatch({ id: "m1", scoreA: 12, scoreB: 7 });
 
-  const winner = computeAggregates("a1", [match], new Map(), 10);
+  const winner = computeAggregates("a1", [match], new Map());
   assert.deepEqual(winner, {
     matchesPlayed: 1,
     wins: 1,
-    rankingPoints: 10,
+    rankingPoints: 6,
     pointsScored: 12,
     pointsAllowed: 7,
     pointsMade: 0,
@@ -71,7 +71,7 @@ test("credits the win to the side that actually scored more", () => {
     fairPlayAwards: 0
   });
 
-  const loser = computeAggregates("b1", [match], new Map(), 10);
+  const loser = computeAggregates("b1", [match], new Map());
   assert.equal(loser.wins, 0);
   assert.equal(loser.rankingPoints, 0);
   assert.equal(loser.pointsScored, 7);
@@ -83,19 +83,19 @@ test("credits the win to the side that actually scored more", () => {
 test("credits the win by side even when the teams are stored as [B, A]", () => {
   const match = buildMatch({ id: "m1", scoreA: 12, scoreB: 7, sideOrder: ["B", "A"] });
 
-  assert.equal(computeAggregates("a1", [match], new Map(), 10).wins, 1);
-  assert.equal(computeAggregates("a1", [match], new Map(), 10).pointsScored, 12);
-  assert.equal(computeAggregates("b1", [match], new Map(), 10).wins, 0);
-  assert.equal(computeAggregates("b1", [match], new Map(), 10).pointsScored, 7);
+  assert.equal(computeAggregates("a1", [match], new Map()).wins, 1);
+  assert.equal(computeAggregates("a1", [match], new Map()).pointsScored, 12);
+  assert.equal(computeAggregates("b1", [match], new Map()).wins, 0);
+  assert.equal(computeAggregates("b1", [match], new Map()).pointsScored, 7);
 });
 
 test("a corrected score moves wins and ranking points and leaves matchesPlayed alone", () => {
-  const before = computeAggregates("a1", [buildMatch({ id: "m1", scoreA: 12, scoreB: 7 })], new Map(), 10);
-  const after = computeAggregates("a1", [buildMatch({ id: "m1", scoreA: 7, scoreB: 12 })], new Map(), 10);
+  const before = computeAggregates("a1", [buildMatch({ id: "m1", scoreA: 12, scoreB: 7 })], new Map());
+  const after = computeAggregates("a1", [buildMatch({ id: "m1", scoreA: 7, scoreB: 12 })], new Map());
 
   assert.equal(before.wins, 1);
   assert.equal(after.wins, 0);
-  assert.equal(before.rankingPoints, 10);
+  assert.equal(before.rankingPoints, 6);
   assert.equal(after.rankingPoints, 0);
   assert.equal(before.matchesPlayed, after.matchesPlayed);
   assert.equal(after.pointsScored, 7);
@@ -111,30 +111,33 @@ test("adds the individual numbers from the report and leaves the team numbers to
     fairPlay: "b2"
   });
 
-  const scorer = computeAggregates("a1", [match], reportsFor(report), 10);
+  const scorer = computeAggregates("a1", [match], reportsFor(report));
   assert.equal(scorer.pointsMade, 6);
   assert.equal(scorer.assists, 2);
   assert.equal(scorer.fouls, 1);
   assert.equal(scorer.mvpAwards, 1);
   assert.equal(scorer.fairPlayAwards, 0);
+  // win 6 + MVP 3 + ceil(6/10) + ceil(2/8) - ceil(1/5) = 10
+  assert.equal(scorer.rankingPoints, 10);
   // The team score stays what the match says, whatever the attribution.
   assert.equal(scorer.pointsScored, 12);
 
-  const fairPlayer = computeAggregates("b2", [match], reportsFor(report), 10);
+  const fairPlayer = computeAggregates("b2", [match], reportsFor(report));
   assert.equal(fairPlayer.fairPlayAwards, 1);
   assert.equal(fairPlayer.pointsMade, 0);
+  assert.equal(fairPlayer.rankingPoints, 2);
 });
 
 test("a completed match without a report still counts for the standings", () => {
   const aggregates = computeAggregates(
     "a1",
     [buildMatch({ id: "m1", scoreA: 12, scoreB: 7 })],
-    new Map(),
-    10
+    new Map()
   );
 
   assert.equal(aggregates.matchesPlayed, 1);
   assert.equal(aggregates.wins, 1);
+  assert.equal(aggregates.rankingPoints, 6);
   assert.equal(aggregates.pointsMade, 0);
 });
 
@@ -153,17 +156,53 @@ test("sums across matches and ignores matches the player was not in", () => {
     ]
   } as unknown as IdentifiedMatch;
 
-  const aggregates = computeAggregates("a1", [...own, foreign], new Map(), 10);
+  const aggregates = computeAggregates("a1", [...own, foreign], new Map());
 
   assert.equal(aggregates.matchesPlayed, 2);
   assert.equal(aggregates.wins, 1);
-  assert.equal(aggregates.rankingPoints, 10);
+  assert.equal(aggregates.rankingPoints, 6);
   assert.equal(aggregates.pointsScored, 17);
   assert.equal(aggregates.pointsAllowed, 16);
 });
 
+test("ceils personal points on tournament totals, not per match", () => {
+  const matches = [
+    buildMatch({ id: "m1", scoreA: 12, scoreB: 7 }),
+    buildMatch({ id: "m2", scoreA: 8, scoreB: 5 })
+  ];
+  const reports = reportsFor(
+    buildReport({ matchId: "m1", lines: [{ registrationId: "a1", points: 1 }] }),
+    buildReport({ matchId: "m2", lines: [{ registrationId: "a1", points: 2 }] })
+  );
+
+  const afterFirst = computeAggregates("a1", [matches[0]], reportsFor(
+    buildReport({ matchId: "m1", lines: [{ registrationId: "a1", points: 1 }] })
+  ));
+  assert.equal(afterFirst.pointsMade, 1);
+  // One win + ceil(1/10) = 6 + 1
+  assert.equal(afterFirst.rankingPoints, 7);
+
+  const afterSecond = computeAggregates("a1", matches, reports);
+  assert.equal(afterSecond.pointsMade, 3);
+  // Two wins + ceil(3/10) = 12 + 1, not 12 + 1 + 1
+  assert.equal(afterSecond.rankingPoints, 13);
+});
+
+test("clamps ranking points at zero when fouls outweigh the rest", () => {
+  const match = buildMatch({ id: "m1", scoreA: 7, scoreB: 12 });
+  const report = buildReport({
+    matchId: "m1",
+    lines: [{ registrationId: "a1", fouls: 6 }]
+  });
+
+  const aggregates = computeAggregates("a1", [match], reportsFor(report));
+  assert.equal(aggregates.wins, 0);
+  assert.equal(aggregates.fouls, 6);
+  assert.equal(aggregates.rankingPoints, 0);
+});
+
 test("returns zeroes rather than negatives for a player with no completed match", () => {
-  const aggregates = computeAggregates("a1", [], new Map(), 10);
+  const aggregates = computeAggregates("a1", [], new Map());
 
   for (const value of Object.values(aggregates)) {
     assert.equal(value, 0);

@@ -149,8 +149,8 @@ draft ──start──> qualification ──last qualification match──> com
 last qualification match currently moves the tournament straight to `completed`.
 
 Anything other than `draft` means the roster, courts, configuration and `winPoints` are locked.
-`winPoints` is locked with the rest because standings are recomputed from it, so retuning it
-mid-tournament would rewrite every result already earned.
+`winPoints` is kept for compatibility and is not used to compute standings. Ranking uses a fixed
+formula on the player's tournament totals (see `rankingPoints` on Registration).
 
 ### Tournament creation flow
 
@@ -287,7 +287,8 @@ Create payload:
 Only `name` is required. `startDate` and `endDate` are optional; when both are supplied, `endDate`
 cannot precede `startDate`. `status` is not accepted — a new tournament always starts as `draft`. A
 `PATCH` accepts any non-empty subset of the remaining fields, except that `configuration`, `courts`
-and `winPoints` are refused with `409` once the tournament has started. Deletion cascades: every match,
+and `winPoints` are refused with `409` once the tournament has started (`winPoints` no longer affects
+standings; ranking uses the formula on Registration). Deletion cascades: every match,
 match report, registration and court access code of the tournament is removed in a single transaction,
 and the response `summary` reports how many of each were deleted. Players are never deleted, only their
 registrations for that tournament.
@@ -352,7 +353,7 @@ export interface Registration {
   playerId: string;
   jerseyNumber?: number;
   skillRating?: number; // snapshot of Player.skillRating, and the per-tournament override
-  rankingPoints: number;
+  rankingPoints: number; // derived standing; see formula below
   matchesPlayed: number;
   wins: number;
   pointsScored: number;  // TEAM score of every match played, not this player's own points
@@ -403,9 +404,25 @@ to the player's rating.
 ### Statistics are engine-managed
 
 The ten counters above are derived, not authored. Team numbers (`matchesPlayed`, `wins`,
-`rankingPoints`, `pointsScored`, `pointsAllowed`) are recomputed from the completed matches;
-individual numbers (`pointsMade`, `assists`, `fouls`, `mvpAwards`, `fairPlayAwards`) come from the
-submitted [match reports](#match-reports).
+`pointsScored`, `pointsAllowed`) are recomputed from the completed matches; individual numbers
+(`pointsMade`, `assists`, `fouls`, `mvpAwards`, `fairPlayAwards`) come from the submitted
+[match reports](#match-reports). `rankingPoints` is then derived from those totals after every
+completed match, report, or correction:
+
+```text
+rankingPoints = max(0,
+    wins           * 6
+  + mvpAwards      * 3
+  + fairPlayAwards * 2
+  + ceil(pointsMade / 10)
+  + ceil(assists   / 8)
+  - ceil(fouls     / 5)
+)
+```
+
+The `ceil` terms use **tournament totals**, not each match on its own: 1 personal point then 2 more
+is `ceil(3/10) = 1`, not `1 + 1`. A paper completion with no report still awards `6` for a win and
+nothing from the box score. `Tournament.winPoints` is ignored by this formula.
 
 `pointsScored` is the **team** score copied onto all three teammates — individual scoring is
 `pointsMade`. The names are kept for compatibility.

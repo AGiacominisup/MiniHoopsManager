@@ -62,9 +62,8 @@ export const updateTournament = async (req: Request, res: Response): Promise<voi
   const body = updateTournamentSchema.parse(req.body);
   const tournament = await loadTournament(id);
 
-  // winPoints is locked with the rest: registration aggregates are recomputed
-  // from the completed matches using it, so retuning it mid-tournament would
-  // silently rewrite every standing already earned.
+  // Configuration, courts and winPoints stay locked after start. winPoints is
+  // unused by the ranking formula but remains on the payload for compatibility.
   if (
     tournament.status !== "draft" &&
     (body.configuration || body.courts || body.winPoints !== undefined)

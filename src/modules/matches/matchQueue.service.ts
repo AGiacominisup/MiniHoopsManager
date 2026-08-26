@@ -1,46 +1,15 @@
 import mongoose, { type ClientSession, Types } from "mongoose";
 import { ApiError } from "../../utils/ApiError";
-import { RegistrationModel } from "../registrations/registration.model";
+import { recomputeRegistrationAggregates } from "../registrations/registrationAggregates.service";
 import { findEnabledCourt, loadTournament } from "../tournaments/tournament.guards";
 import { TournamentModel } from "../tournaments/tournament.model";
-import {
-  MatchModel,
-  type MatchDocument,
-  type MatchSide,
-  type MatchTeam
-} from "./match.model";
+import { MatchModel, type MatchDocument } from "./match.model";
+
+export { resolveMatchOutcome } from "./matchOutcome";
+export type { MatchOutcome } from "./matchOutcome";
 
 const registrationIds = (match: MatchDocument): string[] =>
   match.teams.flatMap((team) => team.players.map((player) => String(player.registrationId)));
-
-const teamBySide = (match: MatchDocument, side: MatchSide): MatchTeam => {
-  const team = match.teams.find((candidate) => candidate.side === side);
-  if (!team) {
-    throw new ApiError(500, `Match is missing team ${side}`);
-  }
-  return team;
-};
-
-export interface MatchOutcome {
-  teamA: MatchTeam;
-  teamB: MatchTeam;
-  // null only for a level score, which the format makes impossible: a game is
-  // played to a target score and the first side to reach it wins.
-  winnerSide: MatchSide | null;
-}
-
-// The single definition of "who won". Reading teams positionally instead of by
-// side used to credit the wrong three players on any match whose teams were
-// stored as [B, A].
-export const resolveMatchOutcome = (
-  match: MatchDocument,
-  scoreA: number,
-  scoreB: number
-): MatchOutcome => ({
-  teamA: teamBySide(match, "A"),
-  teamB: teamBySide(match, "B"),
-  winnerSide: scoreA === scoreB ? null : scoreA > scoreB ? "A" : "B"
-});
 
 // A player cannot be in two games at once: everything reserved or being played
 // holds its six players until the game is completed.
@@ -282,50 +251,6 @@ export const completeMatchWithSession = async (
     );
   }
 
-  const tournament = await TournamentModel.findById(match.tournamentId).session(session);
-  if (!tournament) {
-    throw new ApiError(404, "Tournament not found");
-  }
-
-  if (!options.skipRegistrationAggregates) {
-    const { teamA, teamB, winnerSide } = resolveMatchOutcome(match, scoreA, scoreB);
-    const winners = winnerSide === "A" ? teamA : teamB;
-    const losers = winnerSide === "A" ? teamB : teamA;
-    const winnerScore = Math.max(scoreA, scoreB);
-    const loserScore = Math.min(scoreA, scoreB);
-    await RegistrationModel.bulkWrite(
-      [
-        ...winners.players.map((player) => ({
-          updateOne: {
-            filter: { _id: player.registrationId },
-            update: {
-              $inc: {
-                matchesPlayed: 1,
-                wins: winnerSide === null ? 0 : 1,
-                rankingPoints: winnerSide === null ? 0 : tournament.winPoints,
-                pointsScored: winnerScore,
-                pointsAllowed: loserScore
-              }
-            }
-          }
-        })),
-        ...losers.players.map((player) => ({
-          updateOne: {
-            filter: { _id: player.registrationId },
-            update: {
-              $inc: {
-                matchesPlayed: 1,
-                pointsScored: loserScore,
-                pointsAllowed: winnerScore
-              }
-            }
-          }
-        }))
-      ],
-      { session }
-    );
-  }
-
   match.set({
     status: "completed",
     scoreA,
@@ -334,6 +259,16 @@ export const completeMatchWithSession = async (
     completedAt: new Date()
   });
   await match.save({ session });
+
+  // Recompute after the match is completed so this result is included. The
+  // report path skips this and calls recompute itself once the box score exists.
+  if (!options.skipRegistrationAggregates) {
+    await recomputeRegistrationAggregates(
+      registrationIds(match),
+      String(match.tournamentId),
+      session
+    );
+  }
 
   const nextMatch = options.skipAssignNext
     ? null
@@ -348,7 +283,7 @@ export const completeMatchWithSession = async (
     // Once the finals generator exists this transition becomes
     // qualification -> finals, and only the last final closes the tournament.
     await TournamentModel.updateOne(
-      { _id: tournament._id, status: "qualification" },
+      { _id: match.tournamentId, status: "qualification" },
       { $set: { status: "completed" } },
       { session }
     );

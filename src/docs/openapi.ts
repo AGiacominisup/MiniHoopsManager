@@ -109,7 +109,10 @@ export const openApiSpec = {
           startDate: { type: "string", format: "date-time", nullable: true },
           endDate: { type: "string", format: "date-time", nullable: true },
           category: { type: "string" },
-          winPoints: { type: "integer" },
+          winPoints: {
+            type: "integer",
+            description: "Unused by standings; rankingPoints uses a fixed formula on registration totals."
+          },
           status: {
             type: "string",
             enum: ["draft", "qualification", "finals", "completed"],
@@ -196,7 +199,12 @@ export const openApiSpec = {
             description:
               "Snapshot of the player's rating taken at registration, and the per-tournament override."
           },
-          rankingPoints: { type: "integer", minimum: 0 },
+          rankingPoints: {
+            type: "integer",
+            minimum: 0,
+            description:
+              "Derived standing from tournament totals: 6 per win, 3 per MVP, 2 per fair play, ceil(pointsMade/10), ceil(assists/8), minus ceil(fouls/5). Clamped at 0. Tournament.winPoints is ignored."
+          },
           matchesPlayed: { type: "integer", minimum: 0 },
           wins: { type: "integer", minimum: 0 },
           pointsScored: { type: "integer", minimum: 0 },

@@ -547,24 +547,33 @@ The ranking should not be considered a permanent player skill rating.
 
 It represents the player's performance during the current tournament.
 
-The exact scoring system is still to be defined.
+After every completed game (report, paper complete, or correction) the engine reloads that
+player's tournament totals and recomputes `rankingPoints` from scratch:
 
-Possible factors include:
+```text
+rankingPoints = max(0,
+    wins           * 6
+  + mvpAwards      * 3
+  + fairPlayAwards * 2
+  + ceil(pointsMade / 10)
+  + ceil(assists   / 8)
+  - ceil(fouls     / 5)
+)
+```
 
-- wins;
-- losses;
-- points scored;
-- point differential;
-- games played;
-- individual performance;
-- other tournament-specific metrics.
+`ceil` is applied to the **cumulative** box-score counters, not per game. One personal point
+then two more is `ceil(3/10) = 1`, not `1 + 1`. A game closed by hand with no report still
+awards 6 for a win and nothing from the box score. `Tournament.winPoints` is unused.
+
+These points are what Phase 2 (finals) will read; the generator itself is not in this layer.
 
 **Team numbers and individual numbers are two different things**, and the counters on `Registration`
 keep them apart:
 
 | Counter | Source | Meaning |
 | --- | --- | --- |
-| `matchesPlayed`, `wins`, `rankingPoints` | the game | outcome, from the recorded score |
+| `matchesPlayed`, `wins` | the game | outcome, from the recorded score |
+| `rankingPoints` | both | standing from the formula above, recomputed from totals |
 | `pointsScored`, `pointsAllowed` | the game | the **team** score, copied onto all three teammates |
 | `pointsMade`, `assists`, `fouls` | the match report | what this player did personally |
 | `mvpAwards`, `fairPlayAwards` | the match report | the scorekeeper's subjective calls |
@@ -573,8 +582,9 @@ keep them apart:
 with the existing API.
 
 **The layering rule.** Team counters are recomputed from the game, individual counters from its
-report. A game closed by hand has no report at all, so the game has to stay authoritative for the
-standings — which is also what keeps an imprecise attribution from ever distorting the ranking (§22).
+report, and `rankingPoints` from both once those totals exist. A game closed by hand has no report,
+so it contributes only the win (6 points) and the team scores. Imprecise basket attribution can
+move `pointsMade` and therefore the standing; the match score still decides who won.
 
 All ten counters are engine-managed: `recomputeRegistrationAggregates` recomputes them from scratch
 and `$set`s them, so it is self-healing and a correction needs no reversal logic.

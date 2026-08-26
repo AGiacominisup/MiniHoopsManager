@@ -36,8 +36,7 @@ const registrationSchema = new Schema<RegistrationDocument>(
     // absent value means "fall back to the player record".
     skillRating: { type: Number, min: 0, max: 10 },
     // Every counter below is engine-managed: recomputeRegistrationAggregates is
-    // the only writer once a match report exists, and it recomputes from the
-    // completed matches and their reports rather than incrementing.
+    // the only writer. rankingPoints is derived from the other totals.
     rankingPoints: { type: Number, default: 0 },
     matchesPlayed: { type: Number, default: 0 },
     wins: { type: Number, default: 0 },
