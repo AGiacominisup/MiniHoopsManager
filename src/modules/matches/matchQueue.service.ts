@@ -52,6 +52,8 @@ const assignNextWithSession = async (
     throw new ApiError(409, "Court already has an assigned match");
   }
 
+  const tournament = await loadTournament(tournamentId, session);
+  const queuePhase = tournament.status === "finals" ? "final" : "qualification";
   const busyPlayers = await loadBusyRegistrationIds(tournamentId, session);
   const lastCompleted = await MatchModel.findOne({ tournamentId, status: "completed" })
     .sort({ completedAt: -1 })
@@ -59,7 +61,7 @@ const assignNextWithSession = async (
   const recentlyPlayed = new Set(lastCompleted ? registrationIds(lastCompleted) : []);
   const queuedMatches = await MatchModel.find({
     tournamentId,
-    phase: "qualification",
+    phase: queuePhase,
     status: "queued"
   })
     .sort({ queuePosition: 1 })
@@ -274,19 +276,19 @@ export const completeMatchWithSession = async (
     ? null
     : await assignNextWithSession(String(match.tournamentId), String(match.courtId), session);
 
-  const remaining = await MatchModel.exists({
-    tournamentId: match.tournamentId,
-    phase: "qualification",
-    status: { $in: ["queued", "ready", "in_progress"] }
-  }).session(session);
-  if (!remaining) {
-    // Once the finals generator exists this transition becomes
-    // qualification -> finals, and only the last final closes the tournament.
-    await TournamentModel.updateOne(
-      { _id: match.tournamentId, status: "qualification" },
-      { $set: { status: "completed" } },
-      { session }
-    );
+  if (match.phase === "final") {
+    const remaining = await MatchModel.exists({
+      tournamentId: match.tournamentId,
+      phase: "final",
+      status: { $in: ["queued", "ready", "in_progress"] }
+    }).session(session);
+    if (!remaining) {
+      await TournamentModel.updateOne(
+        { _id: match.tournamentId, status: "finals" },
+        { $set: { status: "completed" } },
+        { session }
+      );
+    }
   }
 
   return { match, nextMatch, idempotent: false };

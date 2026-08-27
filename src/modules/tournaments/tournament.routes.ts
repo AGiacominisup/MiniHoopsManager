@@ -10,6 +10,7 @@ import {
 	cancelTournamentQualification,
 	deleteTournament,
 	generateTournamentQualification,
+	generateTournamentFinals,
 	getTournament,
 	getTournamentSetup,
 	listAvailablePlayers,
@@ -33,6 +34,7 @@ tournamentRouter.post("/:id/start", requireAuth, requireRole(["admin", "staff"])
 tournamentRouter.post("/:id/qualification/preview", requireAuth, requireRole(["admin", "staff"]), asyncHandler(previewTournamentQualification));
 tournamentRouter.post("/:id/qualification/generate", requireAuth, requireRole(["admin", "staff"]), asyncHandler(generateTournamentQualification));
 tournamentRouter.delete("/:id/qualification", requireAuth, requireRole(["admin", "staff"]), asyncHandler(cancelTournamentQualification));
+tournamentRouter.post("/:id/finals/generate", requireAuth, requireRole(["admin", "staff"]), asyncHandler(generateTournamentFinals));
 tournamentRouter.post("/:id/courts/:courtId/assign-next", requireAuth, requireRole(["admin", "staff"]), asyncHandler(assignNextTournamentMatch));
 tournamentRouter.post("/:id/recompute-aggregates", requireAuth, requireRole(["admin"]), asyncHandler(recomputeTournamentAggregates));
 tournamentRouter.get("/:id", requireAuth, asyncHandler(getTournament));

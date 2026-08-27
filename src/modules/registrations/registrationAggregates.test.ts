@@ -14,6 +14,7 @@ const buildMatch = (options: {
   scoreA: number;
   scoreB: number;
   sideOrder?: MatchSide[];
+  phase?: MatchDocument["phase"];
 }): IdentifiedMatch => {
   const players = (ids: string[]) => ids.map((id) => ({ registrationId: id as never }));
   const teams = [
@@ -25,6 +26,7 @@ const buildMatch = (options: {
     _id: options.id,
     scoreA: options.scoreA,
     scoreB: options.scoreB,
+    phase: options.phase,
     teams: (options.sideOrder ?? ["A", "B"]).map((side) =>
       teams.find((team) => team.side === side)
     )
@@ -207,4 +209,25 @@ test("returns zeroes rather than negatives for a player with no completed match"
   for (const value of Object.values(aggregates)) {
     assert.equal(value, 0);
   }
+});
+
+test("a final match updates stats but does not move rankingPoints", () => {
+  const qualification = buildMatch({ id: "m1", scoreA: 12, scoreB: 7, phase: "qualification" });
+  const finalMatch = buildMatch({ id: "m2", scoreA: 11, scoreB: 8, phase: "final" });
+  const reports = reportsFor(
+    buildReport({
+      matchId: "m2",
+      lines: [{ registrationId: "a1", points: 20, assists: 8 }],
+      mvp: "a1"
+    })
+  );
+
+  const aggregates = computeAggregates("a1", [qualification, finalMatch], reports);
+
+  assert.equal(aggregates.matchesPlayed, 2);
+  assert.equal(aggregates.wins, 2);
+  assert.equal(aggregates.pointsMade, 20);
+  assert.equal(aggregates.mvpAwards, 1);
+  // Qualification win only: 6. The final win, MVP and box score are display stats.
+  assert.equal(aggregates.rankingPoints, 6);
 });

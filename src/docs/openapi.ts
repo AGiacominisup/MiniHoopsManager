@@ -138,6 +138,13 @@ export const openApiSpec = {
               totalMatches: { type: "integer" }
             }
           },
+          finals: {
+            type: "object",
+            properties: {
+              generatedAt: { type: "string", format: "date-time" },
+              totalMatches: { type: "integer" }
+            }
+          },
           courts: {
             type: "array",
             items: {
@@ -203,14 +210,20 @@ export const openApiSpec = {
             type: "integer",
             minimum: 0,
             description:
-              "Derived standing from tournament totals: 6 per win, 3 per MVP, 2 per fair play, ceil(pointsMade/10), ceil(assists/8), minus ceil(fouls/5). Clamped at 0. Tournament.winPoints is ignored."
+              "Derived standing from qualification totals only: 6 per qualification win, 3 per MVP, 2 per fair play, ceil(pointsMade/10), ceil(assists/8), minus ceil(fouls/5). Final-phase reports do not change this value. Clamped at 0. Tournament.winPoints is ignored."
           },
           matchesPlayed: { type: "integer", minimum: 0 },
           wins: { type: "integer", minimum: 0 },
           pointsScored: { type: "integer", minimum: 0 },
           pointsAllowed: { type: "integer", minimum: 0 },
-          finalGroupId: { type: "string", nullable: true }
-          ,attendanceStatus: { type: "string", enum: ["registered", "checked_in", "withdrawn"] },
+          finalGroupId: { type: "string", nullable: true },
+          qualificationRank: {
+            type: "integer",
+            minimum: 1,
+            nullable: true,
+            description: "1-based qualification standing frozen when finals are generated."
+          },
+          attendanceStatus: { type: "string", enum: ["registered", "checked_in", "withdrawn"] },
           checkedInAt: { type: "string", format: "date-time", nullable: true }
         }
       },
@@ -603,7 +616,7 @@ export const openApiSpec = {
       get: {
         tags: ["Tournaments"], summary: "Get tournament setup readiness", security: [{ bearerAuth: [] }],
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
-        responses: { "200": { description: "Tournament setup, attendance counts and blockers" } }
+        responses: { "200": { description: "Tournament setup, attendance counts, qualification blockers and finalsReadiness" } }
       }
     },
     "/api/tournaments/{id}/available-players": {
@@ -666,6 +679,21 @@ export const openApiSpec = {
         tags: ["Tournaments"], summary: "Cancel an unstarted qualification plan", security: [{ bearerAuth: [] }],
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
         responses: { "200": { description: "Generation cancelled" }, "409": { description: "A match was already assigned" } }
+      }
+    },
+    "/api/tournaments/{id}/finals/generate": {
+      post: {
+        tags: ["Tournaments"],
+        summary: "Generate final-phase matches from the frozen qualification ranking",
+        security: [{ bearerAuth: [] }],
+        description:
+          "Requires every qualification match to be completed with a report, at least 6 checked-in players, unique finalGroups with length >= ceil(N/6), and an enabled court. Seats groups of six by ranking (1st/3rd/6th vs 2nd/4th/5th); when N is not divisible by 6 the last group is filled from the bottom of the previous group. Idempotent.",
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+        responses: {
+          "201": { description: "Final matches generated and tournament moved to finals" },
+          "200": { description: "Idempotent replay" },
+          "409": { description: "Qualification not ready, missing reports, or not enough final groups" }
+        }
       }
     },
     "/api/tournaments/{id}/courts/{courtId}/assign-next": {
@@ -755,8 +783,8 @@ export const openApiSpec = {
         responses: { "200": { description: "Match list; queued matches carry an availability block reporting whether their players are free" } }
       },
       post: {
-        tags: ["Matches"], summary: "Create a final-phase match", security: [{ bearerAuth: [] }],
-        description: "Qualification matches are produced by the tournament generator and cannot be created here.",
+        tags: ["Matches"], summary: "Create a match", security: [{ bearerAuth: [] }],
+        description: "Qualification and final matches are produced by the tournament generator and cannot be created here.",
         requestBody: { required: true, content: { "application/json": { schema: { $ref: "#/components/schemas/Match" } } } },
         responses: { "201": { description: "Match created" }, "400": { description: "Invalid references" }, "409": { description: "Qualification phase is engine-managed" } }
       }
@@ -892,13 +920,13 @@ export const openApiSpec = {
       put: {
         tags: ["MatchReports"],
         summary: "Correct a submitted report (admin, staff)",
-        description: "The only way a completed result changes; POST /api/matches/{id}/complete still refuses it. Allowed even after the tournament is completed. Keeps the previous state in corrections, recomputes the standings of the six players, and never reserves another match or moves any status.",
+        description: "The only way a completed result changes; POST /api/matches/{id}/complete still refuses it. Final-phase corrections remain allowed after the tournament is completed. Qualification corrections are refused once finals have been generated. Keeps the previous state in corrections, recomputes display stats, and never reserves another match or moves any status.",
         security: [{ bearerAuth: [] }],
         requestBody: { required: true, content: { "application/json": { schema: { $ref: "#/components/schemas/MatchReportCorrectRequest" } } } },
         responses: {
           "200": { description: "Report corrected and standings recomputed" },
           "400": { description: "Invalid payload or missing note" },
-          "409": { description: "Match is not completed, was modified concurrently, or hit the revision limit" }
+          "409": { description: "Match is not completed, qualification ranking is frozen, was modified concurrently, or hit the revision limit" }
         }
       }
     },

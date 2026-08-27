@@ -548,16 +548,16 @@ The ranking should not be considered a permanent player skill rating.
 It represents the player's performance during the current tournament.
 
 After every completed game (report, paper complete, or correction) the engine reloads that
-player's tournament totals and recomputes `rankingPoints` from scratch:
+player's totals and recomputes `rankingPoints` from **qualification** matches only:
 
 ```text
 rankingPoints = max(0,
-    wins           * 6
-  + mvpAwards      * 3
-  + fairPlayAwards * 2
-  + ceil(pointsMade / 10)
-  + ceil(assists   / 8)
-  - ceil(fouls     / 5)
+    qualificationWins           * 6
+  + qualificationMvpAwards      * 3
+  + qualificationFairPlayAwards * 2
+  + ceil(qualificationPointsMade / 10)
+  + ceil(qualificationAssists   / 8)
+  - ceil(qualificationFouls     / 5)
 )
 ```
 
@@ -565,7 +565,9 @@ rankingPoints = max(0,
 then two more is `ceil(3/10) = 1`, not `1 + 1`. A game closed by hand with no report still
 awards 6 for a win and nothing from the box score. `Tournament.winPoints` is unused.
 
-These points are what Phase 2 (finals) will read; the generator itself is not in this layer.
+These points are what the finals generator reads; only qualification matches feed the formula.
+Final-phase reports still update display stats (`matchesPlayed`, `wins`, box score) so the whole
+tournament can be shown, but they do not move `rankingPoints`.
 
 **Team numbers and individual numbers are two different things**, and the counters on `Registration`
 keep them apart:
@@ -573,7 +575,7 @@ keep them apart:
 | Counter | Source | Meaning |
 | --- | --- | --- |
 | `matchesPlayed`, `wins` | the game | outcome, from the recorded score |
-| `rankingPoints` | both | standing from the formula above, recomputed from totals |
+| `rankingPoints` | qualification games + reports | standing from the formula above; finals excluded |
 | `pointsScored`, `pointsAllowed` | the game | the **team** score, copied onto all three teammates |
 | `pointsMade`, `assists`, `fouls` | the match report | what this player did personally |
 | `mvpAwards`, `fairPlayAwards` | the match report | the scorekeeper's subjective calls |
@@ -581,10 +583,12 @@ keep them apart:
 `pointsScored` is *not* individual scoring — `pointsMade` is. The names are kept for compatibility
 with the existing API.
 
-**The layering rule.** Team counters are recomputed from the game, individual counters from its
-report, and `rankingPoints` from both once those totals exist. A game closed by hand has no report,
-so it contributes only the win (6 points) and the team scores. Imprecise basket attribution can
-move `pointsMade` and therefore the standing; the match score still decides who won.
+**The layering rule.** Team counters are recomputed from every completed game, individual counters
+from its report, and `rankingPoints` from qualification games and reports only. A qualification
+game closed by hand has no report, so it contributes only the win (6 points) and the team scores.
+A final game updates display stats and never `rankingPoints`. Imprecise basket attribution on a
+qualification report can move `pointsMade` and therefore the standing; the match score still
+decides who won.
 
 All ten counters are engine-managed: `recomputeRegistrationAggregates` recomputes them from scratch
 and `$set`s them, so it is self-healing and a correction needs no reversal logic.
@@ -718,13 +722,11 @@ The lifecycle is a **single linear progression** on `Tournament.status`. There i
 cross-reference: one field answers "where is this tournament?".
 
 ```text
-draft ──start──> qualification ──last qualification game──> completed
-                       │
-                       └── (not yet implemented) ──> finals ──> completed
+draft ──start──> qualification ──POST /finals/generate──> finals ──last final──> completed
 ```
 
 The status is **engine-managed**. It is not accepted on tournament create or update, and moves only
-through the start action, game completion, and cancellation.
+through the start action, finals generate, completion of the last final, and cancellation.
 
 ### draft
 
@@ -749,24 +751,30 @@ invalidate recorded results.
 
 ### finals
 
-**Not implemented.** Reserved for the phase where players are grouped by tournament ranking and
-assigned to final games. `Tournament.finalGroups` and `Registration.finalGroupId` already exist as
-its data model, but there is no generator and no transition into this state.
+After every qualification game has been completed **with a report**, staff calls
+`POST /tournaments/{id}/finals/generate`. The engine recomputes the qualification standing,
+freezes `qualificationRank`, assigns each checked-in player a primary `finalGroupId`, and queues
+one 3v3 final per used `finalGroup` (ascending `level`, top six in level 1).
 
-Until it exists, completing the last qualification game moves the tournament directly to
-`completed`. When the generator lands, that transition becomes `qualification → finals`, and only
-the last final closes the tournament.
+Teams inside a sestetto are 1st/3rd/6th vs 2nd/4th/5th. When the roster is not divisible by 6, the
+last group is an extra match filled from the bottom of the previous group; those players keep their
+primary group and play two finals.
+
+Completing a qualification game no longer closes the tournament. Only the last final moves
+`Tournament.status` to `completed`. `finalGroups` may still be patched while status is
+`qualification`; they lock once finals exist.
 
 ### completed
 
 Every game has been played and the awards can be given out. The tournament is effectively
 read-only, and exists to be queried for results and statistics.
 
-**One audited exception.** A match report can be corrected by admin or staff after the tournament is
-`completed` — indeed that is the main reason the correction path exists, since a wrong attribution is
-usually noticed while reading the final standings. A correction rewrites the score and the box score
-of one game and recomputes the affected standings; it never moves `Tournament.status`, never reopens a
-game, and records who changed what and why (§22).
+**One audited exception.** A **final-phase** match report can be corrected by admin or staff after
+the tournament is `completed`. A qualification report cannot: once finals have been generated the
+seating is frozen and that correction returns `409`. An allowed correction rewrites the score and the
+box score of one game and recomputes the affected display stats; it never moves `Tournament.status`,
+never reopens a game, and records who changed what and why (§22). Qualification ranking points are
+not recalculated from final-phase totals.
 
 ---
 
@@ -935,14 +943,14 @@ The engine should be designed so that additional constraints can be introduced p
 - teammate **and** opponent diversity, scored with a lexicographic cost vector;
 - team balance from the player skill rating, inside a tolerance band (§11.2, §12.1).
 
-### Phase 2
+### Phase 2 — partially implemented
 
-Add:
-
-- ranking;
-- ranking-based additional games;
-- rating updates driven by results;
-- advanced scoring function with configurable weights.
+- ranking from qualification results (`rankingPoints`, frozen into `qualificationRank` at finals
+  generate);
+- finals generation from that ranking, including extra matches when N is not divisible by 6;
+- ranking-based additional **qualification** appearances — not yet active (see §9);
+- rating updates driven by results — skill rating remains staff-authored;
+- advanced scoring function with configurable weights — not yet.
 
 ### Phase 3
 
@@ -1084,8 +1092,10 @@ the scorekeeper is done.
 append-only `corrections` array with who changed it and when, and bumps a `revision` counter. The
 superseded state is never deleted — it is the only way to explain a changed standing to a parent.
 
-A correction recomputes the standings of the six players, so a flipped winner moves `wins` and
-`rankingPoints` for all six without any reversal logic.
+A correction recomputes the display stats of the six players. A qualification correction that
+flips the winner moves `wins` and `rankingPoints` only while finals have not been generated; after
+that it is refused. A final-phase correction updates `wins` and the box score but never
+`rankingPoints`.
 
 What a correction must never do, and does not:
 
@@ -1093,7 +1103,8 @@ What a correction must never do, and does not:
   `Court already has an assigned match` depending only on whether that court happens to be busy;
 - **touch `status`, `completedAt`, `startedAt` or `courtId`.** Court assignment sorts by `completedAt`
   for its rest heuristic, so rewriting it would silently degrade every later assignment;
-- **move `Tournament.status`**, including when the tournament is already `completed` (§15).
+- **move `Tournament.status`**, including when the tournament is already `completed` (§15);
+- **correct a qualification report after finals exist.** The seating is frozen.
 
 A game closed by hand that never got a report can be given one through the same endpoint, and a report
 arriving late for such a game is accepted as the better evidence — updating the score and the standings

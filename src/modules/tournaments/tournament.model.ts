@@ -9,9 +9,9 @@ import { Schema, model } from "mongoose";
  *   completed     everything is played; the tournament is read-only
  *
  * Transitions are driven by the engine, never set directly by a client.
- * `finals` is not reachable yet: the finals generator does not exist, so the
- * last completed qualification game currently moves the tournament straight to
- * `completed`.
+ * Completing qualification does not close the tournament: staff generate
+ * finals with POST /tournaments/:id/finals/generate, and only the last
+ * final match moves status to `completed`.
  */
 export type TournamentStatus = "draft" | "qualification" | "finals" | "completed";
 
@@ -42,6 +42,11 @@ export interface QualificationConfiguration {
   totalMatches: number;
 }
 
+export interface FinalsConfiguration {
+  generatedAt?: Date;
+  totalMatches: number;
+}
+
 export interface TournamentDocument {
   name: string;
   startDate?: Date;
@@ -53,6 +58,7 @@ export interface TournamentDocument {
   finalGroups: FinalGroup[];
   configuration: TournamentConfiguration;
   qualification: QualificationConfiguration;
+  finals: FinalsConfiguration;
 }
 
 const courtSchema = new Schema<Court>(
@@ -109,6 +115,14 @@ const qualificationConfigurationSchema = new Schema<QualificationConfiguration>(
   { _id: false }
 );
 
+const finalsConfigurationSchema = new Schema<FinalsConfiguration>(
+  {
+    generatedAt: { type: Date },
+    totalMatches: { type: Number, min: 0, default: 0 }
+  },
+  { _id: false }
+);
+
 const tournamentSchema = new Schema<TournamentDocument>(
   {
     name: { type: String, required: true, trim: true },
@@ -124,7 +138,8 @@ const tournamentSchema = new Schema<TournamentDocument>(
     courts: { type: [courtSchema], default: [] },
     finalGroups: { type: [finalGroupSchema], default: [] },
     configuration: { type: tournamentConfigurationSchema, default: () => ({}) },
-    qualification: { type: qualificationConfigurationSchema, default: () => ({}) }
+    qualification: { type: qualificationConfigurationSchema, default: () => ({}) },
+    finals: { type: finalsConfigurationSchema, default: () => ({}) }
   },
   {
     timestamps: true

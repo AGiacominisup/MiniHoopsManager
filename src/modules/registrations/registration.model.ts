@@ -22,6 +22,8 @@ export interface RegistrationDocument {
   mvpAwards: number;
   fairPlayAwards: number;
   finalGroupId: Schema.Types.ObjectId | null;
+  /** 1-based qualification standing, set when finals are generated. */
+  qualificationRank: number | null;
   attendanceStatus: AttendanceStatus;
   checkedInAt: Date | null;
 }
@@ -50,6 +52,7 @@ const registrationSchema = new Schema<RegistrationDocument>(
     mvpAwards: { type: Number, default: 0, min: 0 },
     fairPlayAwards: { type: Number, default: 0, min: 0 },
     finalGroupId: { type: Schema.Types.ObjectId, default: null },
+    qualificationRank: { type: Number, default: null, min: 1 },
     attendanceStatus: {
       type: String,
       enum: ["registered", "checked_in", "withdrawn"],

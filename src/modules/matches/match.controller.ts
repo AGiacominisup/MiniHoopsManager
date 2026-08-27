@@ -61,20 +61,20 @@ const validateMatchReferences = async (
   }
 };
 
-// Qualification matches are the generator's output. A hand-made one would not be
+// Generated matches are the engine's output. A hand-made one would not be
 // removed by a cancellation and would then block every regeneration attempt.
-const assertNotQualificationPhase = (phase: string | undefined): void => {
-  if (phase === "qualification") {
+const assertNotEngineManagedPhase = (phase: string | undefined): void => {
+  if (phase === "qualification" || phase === "final") {
     throw new ApiError(
       409,
-      "Qualification matches are produced by the tournament generator and cannot be managed directly"
+      "Qualification and final matches are produced by the tournament generator and cannot be managed directly"
     );
   }
 };
 
 export const createMatch = async (req: Request, res: Response): Promise<void> => {
   const body = createMatchSchema.parse(req.body);
-  assertNotQualificationPhase(body.phase);
+  assertNotEngineManagedPhase(body.phase);
   await validateMatchReferences(
     body.tournamentId,
     body.courtId,
@@ -129,7 +129,7 @@ export const updateMatch = async (req: Request, res: Response): Promise<void> =>
   if (match.generationSeed) {
     throw new ApiError(409, "Generated match composition is immutable");
   }
-  assertNotQualificationPhase(body.phase);
+  assertNotEngineManagedPhase(body.phase);
 
   const tournamentId = body.tournamentId ?? String(match.tournamentId);
   const courtId = body.courtId ?? String(match.courtId);
@@ -157,6 +157,7 @@ export const deleteMatch = async (req: Request, res: Response): Promise<void> =>
   if (existingMatch.generationSeed) {
     throw new ApiError(409, "Generated matches cannot be deleted individually");
   }
+  assertNotEngineManagedPhase(existingMatch.phase);
   await existingMatch.deleteOne();
 
   res.status(200).json({ message: "Match deleted" });

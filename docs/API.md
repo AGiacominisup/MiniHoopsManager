@@ -136,21 +136,23 @@ Common status codes:
 forward:
 
 ```text
-draft ──start──> qualification ──last qualification match──> completed
-                        │
-                        └── (future) ──> finals ──> completed
+draft ──start──> qualification ──POST /finals/generate──> finals ──last final──> completed
 ```
 
 `status` is **engine-managed**: it is not accepted on `POST /tournaments` or `PATCH
-/tournaments/:id`. It changes only through `POST /tournaments/:id/start`, match completion, and
+/tournaments/:id`. It changes only through `POST /tournaments/:id/start`,
+`POST /tournaments/:id/finals/generate`, completion of the last **final** match, and
 `DELETE /tournaments/:id/qualification`, which sends it back to `draft`.
 
-`finals` is declared but not yet reachable — the finals generator does not exist, so completing the
-last qualification match currently moves the tournament straight to `completed`.
+Completing the last qualification match does **not** close the tournament or open the finals. The
+back office reads `finalsReadiness` on `GET /tournaments/:id/setup` and calls generate when every
+qualification match is completed **and** has a report.
 
 Anything other than `draft` means the roster, courts, configuration and `winPoints` are locked.
+`finalGroups` stay editable during `qualification` so staff can add enough named groups before
+generate; they lock once status is `finals` or `completed`.
 `winPoints` is kept for compatibility and is not used to compute standings. Ranking uses a fixed
-formula on the player's tournament totals (see `rankingPoints` on Registration).
+formula on the player's **qualification** totals (see `rankingPoints` on Registration).
 
 ### Tournament creation flow
 
@@ -169,6 +171,10 @@ snapshots, not persistent entities. A tournament is prepared and started with th
   freezes the roster, generates the match queue and moves the tournament to `qualification`.
 5. Reserve a queued match on a court, start it, then complete it. Completion reserves the next
   compatible match on the same court but does not start it.
+6. When every qualification match has a report, `GET /tournaments/:id/setup` reports
+  `finalsReadiness.ready: true`. Staff then calls `POST /tournaments/:id/finals/generate`.
+7. Final matches are queued the same way as qualification. Completing the last final moves the
+  tournament to `completed`.
 
 Starting requires at least `playersPerMatch` associated players **and** at least one enabled court.
 
@@ -218,6 +224,49 @@ would produce a different plan from the one that was reviewed.
 The plan can be cancelled only before any match is assigned to a court; cancelling removes every
 qualification match and returns the tournament to `draft`, reopening the roster.
 
+### Generating the finals
+
+`GET /tournaments/:id/setup` includes `finalsReadiness` so the back office can enable generate
+without duplicating server rules:
+
+```ts
+export interface FinalsReadiness {
+  ready: boolean;
+  blockers: string[];
+  requiredFinalGroups: number; // ceil(checkedIn / 6)
+  checkedIn: number;
+}
+```
+
+`POST /tournaments/:id/finals/generate` (admin/staff) is idempotent: a replay after success returns
+`200` with the stored matches. It refuses with `409` and the same blocker texts when:
+
+- status is not `qualification` (or finals were already generated — except the idempotent replay);
+- a qualification match is not `completed`;
+- a completed qualification match has no report (paper completion without a report blocks generate);
+- fewer than 6 players are `checked_in`;
+- `finalGroups` do not have unique `level` values, or there are fewer groups than
+  `requiredFinalGroups`;
+- no court is enabled.
+
+Generate recomputes qualification standings, writes `qualificationRank` (1-based) and the primary
+`finalGroupId` on each checked-in registration, queues one `phase: "final"` match per used group,
+and moves status to `finals`. Groups are taken in ascending `level` (`level` 1 = top 6). Extra
+groups on the tournament stay unused.
+
+Inside each sestetto, ranked 1–6 locally: team A is 1st, 3rd, 6th; team B is 2nd, 4th, 5th.
+
+When `N % 6 = R` and `R !== 0`, the last used group is an **extra** match: the bottom `6-R` players
+of the previous group plus the remaining `R`. Those `6-R` players keep the previous group's
+`finalGroupId` (their primary group) and play two finals. Example with 19 players and Gold /
+Silver / Bronze / Copper: Gold 1–6, Silver 7–12, Bronze 13–18, Copper extra 14–18 + 19.
+
+Fewer than 6 checked-in players is `409`. Exactly 6 produces one match and no extra.
+
+Final matches are assigned, started and reported like qualification matches.
+`POST /tournaments/:id/courts/:courtId/assign-next` in `finals` only considers `phase: "final"`
+queued games. Completing the last final moves the tournament to `completed`.
+
 ```ts
 export type TournamentStatus =
   | "draft"          // created; players are being associated
@@ -247,6 +296,10 @@ export interface Tournament {
     generatedAt?: string;
     totalMatches: number;
   };
+  finals: {
+    generatedAt?: string;
+    totalMatches: number;
+  };
   courts: Array<{ _id: string; name: string }>;
   finalGroups: Array<{ _id: string; themeName: string; level: number }>;
   createdAt: string;
@@ -263,8 +316,9 @@ Endpoints:
 | `GET` | `/tournaments/:id` | `{ tournament }` |
 | `PATCH` | `/tournaments/:id` | `{ message, tournament }` |
 | `DELETE` | `/tournaments/:id` | `{ message, summary: { matches, matchReports, registrations, courtAccessCodes } }` |
-| `GET` | `/tournaments/:id/setup` | `{ tournament, attendance, readiness }` |
+| `GET` | `/tournaments/:id/setup` | `{ tournament, attendance, readiness, finalsReadiness }` |
 | `POST` | `/tournaments/:id/start` | `{ message, tournament, matches, idempotent }` |
+| `POST` | `/tournaments/:id/finals/generate` | `{ message, tournament, matches, idempotent }` |
 | `GET` | `/tournaments/:id/available-players` | `{ players: Player[] }` |
 | `POST` | `/tournaments/:id/registrations/bulk` | `{ registrations, summary: { created, alreadyRegistered } }` |
 | `DELETE` | `/tournaments/:id/registrations/bulk` | `{ message, summary: { deleted } }` |
@@ -288,7 +342,9 @@ Only `name` is required. `startDate` and `endDate` are optional; when both are s
 cannot precede `startDate`. `status` is not accepted — a new tournament always starts as `draft`. A
 `PATCH` accepts any non-empty subset of the remaining fields, except that `configuration`, `courts`
 and `winPoints` are refused with `409` once the tournament has started (`winPoints` no longer affects
-standings; ranking uses the formula on Registration). Deletion cascades: every match,
+standings; ranking uses the formula on Registration). `finalGroups` can still be patched during
+`qualification` so the roster of named groups matches `ceil(checkedIn / 6)` before generate; they are
+refused with `409` once finals exist. Deletion cascades: every match,
 match report, registration and court access code of the tournament is removed in a single transaction,
 and the response `summary` reports how many of each were deleted. Players are never deleted, only their
 registrations for that tournament.
@@ -364,6 +420,7 @@ export interface Registration {
   mvpAwards: number;
   fairPlayAwards: number;
   finalGroupId: string | null;
+  qualificationRank: number | null; // 1-based standing frozen at finals generate; null until then
   attendanceStatus: "registered" | "checked_in" | "withdrawn";
   checkedInAt: string | null;
   createdAt: string;
@@ -393,7 +450,8 @@ Create payload:
 
 `tournamentId` and `playerId` are required. Statistics are optional non-negative integers and
 default to zero. A player can be registered only once per tournament. `finalGroupId`, when set,
-must belong to the selected tournament. Deletion returns `409` while a match references the
+must belong to the selected tournament. `qualificationRank` is engine-managed and is not accepted on
+create or update. Deletion returns `409` while a match references the
 registration.
 
 `skillRating` defaults to the player's own rating and only needs to be sent to override it for this
@@ -404,24 +462,26 @@ to the player's rating.
 ### Statistics are engine-managed
 
 The ten counters above are derived, not authored. Team numbers (`matchesPlayed`, `wins`,
-`pointsScored`, `pointsAllowed`) are recomputed from the completed matches; individual numbers
-(`pointsMade`, `assists`, `fouls`, `mvpAwards`, `fairPlayAwards`) come from the submitted
-[match reports](#match-reports). `rankingPoints` is then derived from those totals after every
-completed match, report, or correction:
+`pointsScored`, `pointsAllowed`) are recomputed from **every** completed match (qualification and
+final); individual numbers (`pointsMade`, `assists`, `fouls`, `mvpAwards`, `fairPlayAwards`) come
+from the submitted [match reports](#match-reports) of those matches. `rankingPoints` is then derived
+**only from qualification matches** after every completed match, report, or correction:
 
 ```text
 rankingPoints = max(0,
-    wins           * 6
-  + mvpAwards      * 3
-  + fairPlayAwards * 2
-  + ceil(pointsMade / 10)
-  + ceil(assists   / 8)
-  - ceil(fouls     / 5)
+    qualificationWins           * 6
+  + qualificationMvpAwards      * 3
+  + qualificationFairPlayAwards * 2
+  + ceil(qualificationPointsMade / 10)
+  + ceil(qualificationAssists   / 8)
+  - ceil(qualificationFouls     / 5)
 )
 ```
 
-The `ceil` terms use **tournament totals**, not each match on its own: 1 personal point then 2 more
-is `ceil(3/10) = 1`, not `1 + 1`. A paper completion with no report still awards `6` for a win and
+A final-phase report still updates the display counters so the whole tournament can be shown on
+stats screens; it never moves `rankingPoints` or `qualificationRank`. The `ceil` terms use
+**qualification totals**, not each match on its own: 1 personal point then 2 more is `ceil(3/10) = 1`,
+not `1 + 1`. A paper completion with no report still awards `6` for a qualification win and
 nothing from the box score. `Tournament.winPoints` is ignored by this formula.
 
 `pointsScored` is the **team** score copied onto all three teammates — individual scoring is
@@ -443,11 +503,11 @@ waiting for an explicit Start command. `ready -> completed` is also reachable, b
 a [match report](#match-reports): a report proves the game was played, so a forgotten Start does not
 strand it.
 
-Qualification matches are owned by the tournament generator: `POST` and `PATCH` reject
-`phase: "qualification"` with `409`, and generated matches cannot be edited or deleted
-individually. Use `DELETE /tournaments/:id/qualification` to discard a whole plan. Submitting or
-correcting a **report** is the exception — it works on generated matches, because it records what
-happened rather than changing the composition.
+Qualification and final matches are owned by the tournament generator: `POST` and `PATCH` reject
+both `phase: "qualification"` and `phase: "final"` with `409`, and generated matches cannot be
+edited or deleted individually. Use `DELETE /tournaments/:id/qualification` to discard a whole
+qualification plan. Submitting or correcting a **report** is the exception — it works on generated
+matches, because it records what happened rather than changing the composition.
 
 To read a generated schedule, filter on `status=queued`; results are ordered by `queuePosition`.
 
@@ -615,7 +675,8 @@ already assigned to a court. Once staff selects the referee, `GET /referee/match
 match. The referee can then start it and submit its report. A new match on the same court requires a
 new availability request and staff selection.
 
-Create payload:
+Match payload shape (generated finals use this composition; `POST /matches` refuses both
+`qualification` and `final` phases — use `POST /tournaments/:id/finals/generate`):
 
 ```json
 {
@@ -654,7 +715,7 @@ they are both stored and returned — a numbered unnamed player and a named play
 are both valid. The court, optional final group, and all registrations must belong to the selected
 tournament.
 
-Generated qualification matches follow the same rule: the snapshot copies the registration jersey
+Generated qualification and final matches follow the same rule: the snapshot copies the registration jersey
 number (falling back to the player record) and the player's display name, so the scorer and the
 backoffice see both fields whenever both exist.
 
@@ -846,12 +907,15 @@ PUT /api/matches/:id/report
 Admin and staff only — never the tablet. `note` is required. The match must be `completed`.
 
 This is the **only** way a completed result changes: `POST /matches/:id/complete` still answers
-`409 Completed match result cannot be changed`. A correction is allowed even after the tournament is
-`completed`, which is the main use case — fixing the standings before the awards.
+`409 Completed match result cannot be changed`. A correction of a **final** report is allowed even
+after the tournament is `completed`. A correction of a **qualification** report is refused with
+`409` once finals have been generated (`status` is `finals`, or `completed` with stored finals), so
+the seating cannot move.
 
 The previous state is kept in full in `corrections` and `revision` is bumped; nothing is ever deleted.
-The standings of the six players are recomputed, so a correction that flips the winner moves `wins` and
-`rankingPoints` for all six. It never reserves another match, never changes the match status or its
+Display stats of the six players are recomputed. A qualification correction that flips the winner
+moves `wins` and `rankingPoints`; a final correction moves `wins` and box-score totals but not
+`rankingPoints`. It never reserves another match, never changes the match status or its
 timestamps, and never moves the tournament status.
 
 A match completed by hand with no report can be given one through the same endpoint (it is created at
@@ -864,6 +928,7 @@ as the better evidence: it updates the score and the standings without touching 
 | `400` | Same validation as the submit, plus a missing `note` |
 | `404` | `Match not found` |
 | `409` | `Only a completed match can be corrected` |
+| `409` | `Qualification reports cannot be corrected after finals have been generated` |
 | `409` | `Match report was modified concurrently` |
 | `409` | `Match report revision limit reached` (20 corrections) |
 

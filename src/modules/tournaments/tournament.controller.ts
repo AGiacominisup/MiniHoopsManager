@@ -27,6 +27,7 @@ import {
   previewQualification,
   startTournament
 } from "./qualification.service";
+import { generateFinals, loadFinalsReadiness } from "./finals.service";
 
 export const createTournament = async (req: Request, res: Response): Promise<void> => {
   const body = createTournamentSchema.parse(req.body);
@@ -72,6 +73,12 @@ export const updateTournament = async (req: Request, res: Response): Promise<voi
       409,
       "Tournament configuration, courts and win points are locked once it has started"
     );
+  }
+  if (
+    (tournament.status === "finals" || tournament.status === "completed") &&
+    body.finalGroups
+  ) {
+    throw new ApiError(409, "Final groups are locked once finals have been generated");
   }
 
   const startDate = body.startDate ? new Date(body.startDate) : tournament.startDate;
@@ -134,11 +141,13 @@ export const getTournamentSetup = async (req: Request, res: Response): Promise<v
     RegistrationModel.countDocuments({ tournamentId: id, attendanceStatus: "withdrawn" })
   ]);
   const blockers = evaluateQualificationReadiness(tournament, checkedIn);
+  const finalsReadiness = await loadFinalsReadiness(tournament);
 
   res.status(200).json({
     tournament,
     attendance: { registered, checkedIn, withdrawn },
-    readiness: { ready: blockers.length === 0, blockers }
+    readiness: { ready: blockers.length === 0, blockers },
+    finalsReadiness
   });
 };
 
@@ -275,6 +284,12 @@ export const cancelTournamentQualification = async (req: Request, res: Response)
   const { id } = idParamsSchema.parse(req.params);
   await cancelQualification(id);
   res.status(200).json({ message: "Qualification generation cancelled" });
+};
+
+export const generateTournamentFinals = async (req: Request, res: Response): Promise<void> => {
+  const { id } = idParamsSchema.parse(req.params);
+  const result = await generateFinals(id);
+  res.status(result.idempotent ? 200 : 201).json({ message: "Finals generated", ...result });
 };
 
 export const assignNextTournamentMatch = async (req: Request, res: Response): Promise<void> => {

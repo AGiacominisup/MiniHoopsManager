@@ -5,7 +5,7 @@ import { MatchModel } from "../matches/match.model";
 import { resolveMatchOutcome } from "../matches/matchOutcome";
 import { MatchReportModel, type MatchReportDocument } from "../matchReports/matchReport.model";
 import { RegistrationModel } from "./registration.model";
-import { computeRankingPoints } from "./rankingFormula";
+import { computeRankingPoints, type RankingInputs } from "./rankingFormula";
 
 export interface RegistrationAggregates {
   matchesPlayed: number;
@@ -48,9 +48,9 @@ const sideOf = (match: MatchDocument, registrationId: string): MatchSide | null 
  * The whole standing of one player, recomputed from scratch.
  *
  * Team numbers come from the match, individual numbers from its report.
- * rankingPoints is then derived from those totals: wins, awards, and ceiled
- * box-score counters. A match completed by hand has no report, so it still
- * contributes the win and the team scores, and nothing from the box score.
+ * Display counters (`matchesPlayed`, `wins`, box-score totals) cover every
+ * completed match. `rankingPoints` is derived only from qualification matches,
+ * so a final report never moves the standing used to seat the finals.
  */
 export const computeAggregates = (
   registrationId: string,
@@ -58,6 +58,14 @@ export const computeAggregates = (
   reportsByMatchId: Map<string, MatchReportDocument>
 ): RegistrationAggregates => {
   const aggregates: RegistrationAggregates = { ...EMPTY_AGGREGATES };
+  const rankingInputs: RankingInputs = {
+    wins: 0,
+    mvpAwards: 0,
+    fairPlayAwards: 0,
+    pointsMade: 0,
+    assists: 0,
+    fouls: 0
+  };
 
   for (const match of matches) {
     const side = sideOf(match, registrationId);
@@ -68,12 +76,16 @@ export const computeAggregates = (
     const { winnerSide } = resolveMatchOutcome(match, match.scoreA, match.scoreB);
     const ownScore = side === "A" ? match.scoreA : match.scoreB;
     const opponentScore = side === "A" ? match.scoreB : match.scoreA;
+    const countsForRanking = match.phase !== "final";
 
     aggregates.matchesPlayed += 1;
     aggregates.pointsScored += ownScore;
     aggregates.pointsAllowed += opponentScore;
     if (winnerSide === side) {
       aggregates.wins += 1;
+      if (countsForRanking) {
+        rankingInputs.wins += 1;
+      }
     }
 
     const report = reportsByMatchId.get(String(match._id));
@@ -88,16 +100,27 @@ export const computeAggregates = (
       aggregates.pointsMade += line.points;
       aggregates.assists += line.assists;
       aggregates.fouls += line.fouls;
+      if (countsForRanking) {
+        rankingInputs.pointsMade += line.points;
+        rankingInputs.assists += line.assists;
+        rankingInputs.fouls += line.fouls;
+      }
     }
     if (String(report.awards.mvpRegistrationId) === registrationId) {
       aggregates.mvpAwards += 1;
+      if (countsForRanking) {
+        rankingInputs.mvpAwards += 1;
+      }
     }
     if (String(report.awards.fairPlayRegistrationId) === registrationId) {
       aggregates.fairPlayAwards += 1;
+      if (countsForRanking) {
+        rankingInputs.fairPlayAwards += 1;
+      }
     }
   }
 
-  aggregates.rankingPoints = computeRankingPoints(aggregates);
+  aggregates.rankingPoints = computeRankingPoints(rankingInputs);
   return aggregates;
 };
 

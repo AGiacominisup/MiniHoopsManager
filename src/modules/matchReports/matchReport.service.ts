@@ -257,6 +257,19 @@ export const correctMatchReport = async (
         throw new ApiError(409, "Only a completed match can be corrected");
       }
 
+      if (match.phase === "qualification") {
+        const tournament = await loadTournament(String(match.tournamentId), session);
+        if (
+          tournament.status === "finals" ||
+          (tournament.status === "completed" && (tournament.finals?.totalMatches ?? 0) > 0)
+        ) {
+          throw new ApiError(
+            409,
+            "Qualification reports cannot be corrected after finals have been generated"
+          );
+        }
+      }
+
       const content = buildReportContent(match, body);
       const existing = await MatchReportModel.findOne({ matchId }).session(session);
 
