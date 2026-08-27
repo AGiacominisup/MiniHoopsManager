@@ -152,7 +152,8 @@ Anything other than `draft` means the roster, courts, configuration and `winPoin
 `finalGroups` stay editable during `qualification` so staff can add enough named groups before
 generate; they lock once status is `finals` or `completed`.
 `winPoints` is kept for compatibility and is not used to compute standings. Ranking uses a fixed
-formula on the player's **qualification** totals (see `rankingPoints` on Registration).
+formula on the player's **best N qualification games**, where N is
+`qualificationAppearancesPerPlayer` (see `rankingPoints` on Registration).
 
 ### Tournament creation flow
 
@@ -204,7 +205,7 @@ The `metrics` returned by `preview` describe the quality of the draw:
 ```ts
 export interface QualificationMetrics {
   matches: number;
-  extraAppearances: number;          // slots handed out above the requested amount
+  extraAppearances: number;          // slots handed out above the requested amount, to the lowest skillRating
   maxAppearanceDifference: number;   // never above 1
   maxTeammatePairCount: number;      // worst number of times two players shared a team
   maxOpponentPairCount: number;      // worst number of times two players faced each other
@@ -217,6 +218,11 @@ export interface QualificationMetrics {
 Team strength is the sum of the three `skillRating` values, so a gap is measured on a 0-30 scale.
 `matchesOverSkillTolerance` above zero means the roster itself cannot be split fairly — usually a
 handful of players far stronger than the rest — not that the generator failed.
+
+When `N × qualificationAppearancesPerPlayer` is not divisible by 6, `extraAppearances` slots are
+handed to the lowest `skillRating` values (unrated players count as 5). Equal ratings are broken
+with the generation seed. The plan's `targets` map shows who received `+1`. Those extra games are
+real appearances; they do not automatically inflate `rankingPoints` (see Registration statistics).
 
 A rating change between `preview` and `generate` invalidates the `rosterFingerprint`, because it
 would produce a different plan from the one that was reviewed.
@@ -456,8 +462,8 @@ registration.
 
 `skillRating` defaults to the player's own rating and only needs to be sent to override it for this
 tournament — useful when a player who is strong for one age group is average in another. It can be
-changed with `PATCH` while the roster is unlocked, and is read by the team generator in preference
-to the player's rating.
+changed with `PATCH` while the roster is unlocked, and is read by the team generator and extra-appearance
+allocation in preference to the player's rating.
 
 ### Statistics are engine-managed
 
@@ -465,7 +471,11 @@ The ten counters above are derived, not authored. Team numbers (`matchesPlayed`,
 `pointsScored`, `pointsAllowed`) are recomputed from **every** completed match (qualification and
 final); individual numbers (`pointsMade`, `assists`, `fouls`, `mvpAwards`, `fairPlayAwards`) come
 from the submitted [match reports](#match-reports) of those matches. `rankingPoints` is then derived
-**only from qualification matches** after every completed match, report, or correction:
+**only from qualification matches**, using the formula below on the **best N** of those games,
+where N is `qualificationAppearancesPerPlayer`. Display counters still include every completed
+match. When the player has N or fewer qualification games this is identical to scoring all of
+them. When they have an extra appearance, every subset of size N is scored and the maximum is
+kept, so a weak extra game cannot inflate the standing used to seat the finals:
 
 ```text
 rankingPoints = max(0,
@@ -479,10 +489,10 @@ rankingPoints = max(0,
 ```
 
 A final-phase report still updates the display counters so the whole tournament can be shown on
-stats screens; it never moves `rankingPoints` or `qualificationRank`. The `ceil` terms use
-**qualification totals**, not each match on its own: 1 personal point then 2 more is `ceil(3/10) = 1`,
-not `1 + 1`. A paper completion with no report still awards `6` for a qualification win and
-nothing from the box score. `Tournament.winPoints` is ignored by this formula.
+stats screens; it never moves `rankingPoints` or `qualificationRank`. The `ceil` terms use the
+**totals of the chosen N games**, not each match on its own: 1 personal point then 2 more is
+`ceil(3/10) = 1`, not `1 + 1`. A paper completion with no report still awards `6` for a qualification
+win and nothing from the box score. `Tournament.winPoints` is ignored by this formula.
 
 `pointsScored` is the **team** score copied onto all three teammates — individual scoring is
 `pointsMade`. The names are kept for compatibility.

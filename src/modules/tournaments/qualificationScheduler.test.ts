@@ -52,6 +52,45 @@ test("balances extra appearances when requested slots are not divisible by six",
   assert.deepEqual(Object.fromEntries(appearances), plan.targets);
 });
 
+test("assigns extra appearances to the lowest skill ratings", () => {
+  // 7 × 2 = 14 slots, rounded up to 18, so four players get a third game.
+  const roster = players(7, (index) => index);
+  const plan = buildQualificationPlan(roster, 2, "lowest-rated-extras");
+
+  const extraIds = Object.entries(plan.targets)
+    .filter(([, appearances]) => appearances === 3)
+    .map(([registrationId]) => registrationId)
+    .sort();
+
+  assert.deepEqual(extraIds, [
+    "registration-1",
+    "registration-2",
+    "registration-3",
+    "registration-4"
+  ]);
+});
+
+test("breaks extra-appearance ties with the generation seed", () => {
+  const roster = players(7, (index) => (index < 2 ? 0 : 8));
+  const first = buildQualificationPlan(roster, 2, "tied-extras-a");
+  const second = buildQualificationPlan(roster, 2, "tied-extras-b");
+
+  const extraIds = (plan: typeof first) =>
+    Object.entries(plan.targets)
+      .filter(([, appearances]) => appearances === 3)
+      .map(([registrationId]) => registrationId)
+      .sort();
+
+  const firstExtras = extraIds(first);
+  const secondExtras = extraIds(second);
+
+  assert.equal(first.metrics.extraAppearances, 4);
+  assert.ok(firstExtras.includes("registration-1"));
+  assert.ok(firstExtras.includes("registration-2"));
+  assert.deepEqual(firstExtras, extraIds(buildQualificationPlan(roster, 2, "tied-extras-a")));
+  assert.notDeepEqual(firstExtras, secondExtras);
+});
+
 test("produces a valid plan across realistic roster and appearance sizes", () => {
   for (let count = 6; count <= 40; count += 1) {
     for (let appearances = 1; appearances <= 6; appearances += 1) {

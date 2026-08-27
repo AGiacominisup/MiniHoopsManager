@@ -22,7 +22,7 @@ The purpose of the engine is to automatically manage the competitive phase of a 
 - repeated player combinations should be minimized;
 - games should be distributed across available courts;
 - competition should remain balanced;
-- when an equal number of games is mathematically impossible, additional games should be assigned according to the tournament ranking.
+- when an equal number of games is mathematically impossible, additional games should be assigned to players with the lowest skill rating.
 
 The tournament engine is therefore not simply a scheduler.
 
@@ -341,46 +341,47 @@ The difference between the minimum and maximum number of games should never exce
 
 # 9. Additional Game Allocation
 
-When the number of available player slots cannot be divided equally among all players, some players must play one additional game.
+When `N × qualificationAppearancesPerPlayer` is not divisible by 6, the engine
+rounds the total slot count up to the next multiple of 6. The leftover slots
+are extra appearances: some players play one additional game. The difference
+between the minimum and maximum number of games never exceeds 1.
 
 Mini Hoops Manager introduces an important domain rule:
 
-> **Additional games should preferentially be assigned to players with the lowest ranking.**
+> **Additional games are assigned to players with the lowest skill rating.**
 
-The rationale is to give players with fewer points additional opportunities to improve their ranking before the final stage.
+The initial rating is known at generation time and does not change during
+qualification. Tournament ranking is not used: it is still zero when the queue
+is built, and feeding standings back into who gets extra games would create a
+loop between scheduling decisions and the ranking those decisions produce.
 
 Example:
 
 ```text
-Players requiring an additional game:
+Players requiring an additional game, selected by skill rating:
 
-Player A → ranking 32
-Player B → ranking 28
-Player C → ranking 24
-Player D → ranking 19
-Player E → ranking 12
+Player A → rating 9
+Player B → rating 8
+Player C → rating 7
+Player D → rating 6
+Player E → rating 3  ← extra
+Player F → rating 2  ← extra
 ```
 
-The engine should prioritize the players with the lowest ranking when selecting who receives the additional game.
+Equal ratings are broken with the generation seed: the roster is shuffled, then
+stable-sorted by rating so the lowest ratings stay first without disturbing the
+random order among equals. Unrated players are treated as **5**, the same
+default the balancer uses.
 
-However, ranking is not the only constraint.
+Skill rating decides *who* receives the extra target. Hard constraints still
+govern how those targets are scheduled: appearance fairness, player overlap at
+assignment time, teammate and opponent variety, and team balance. An extra is
+only ever `+1`; it never overrides the max-appearance difference of 1.
 
-A player can only be selected if the assignment is compatible with:
-
-- court availability;
-- current round;
-- previous game participation;
-- maximum games;
-- player combination diversity;
-- other tournament constraints.
-
-Therefore, ranking should be considered a **priority factor**, not an absolute rule that can violate hard constraints.
-
-> **Implementation status:** not yet active. The engine currently distributes the additional
-> appearances uniformly at random across the roster, using the generation seed. Ranking-driven
-> allocation is Phase 2 (§20) and requires the ranking system to exist first — at generation time
-> every player still has zero ranking points, so this rule only becomes meaningful once games are
-> generated in stages rather than all at once.
+Players who receive an extra game must not gain an automatic ranking advantage.
+`rankingPoints` is computed from the best `N` qualification games, where `N` is
+`qualificationAppearancesPerPlayer` (§12). Display counters still count every
+game.
 
 ---
 
@@ -411,7 +412,7 @@ Examples:
 1. Avoid repeating teammates.
 2. Avoid repeating opponents.
 3. Keep games balanced, using the player skill rating described in §12.1.
-4. Prefer players with lower ranking for additional games.
+4. Prefer players with lower skill rating for additional games.
 5. Minimize differences in number of games played.
 6. Maximize diversity of combinations.
 7. Avoid repeating the same team composition.
@@ -548,7 +549,15 @@ The ranking should not be considered a permanent player skill rating.
 It represents the player's performance during the current tournament.
 
 After every completed game (report, paper complete, or correction) the engine reloads that
-player's totals and recomputes `rankingPoints` from **qualification** matches only:
+player's totals and recomputes `rankingPoints` from **qualification** matches only, using the
+existing formula on the **best N** of those games, where `N` is
+`qualificationAppearancesPerPlayer`. Display counters (`matchesPlayed`, `wins`, box score) still
+include every completed match.
+
+When the player has `N` or fewer qualification games, this is identical to scoring all of them.
+When they have an extra appearance, every subset of size `N` is scored and the maximum is kept, so
+a weak extra game cannot inflate the standing used to seat the finals. A strong extra game can
+replace a worse one.
 
 ```text
 rankingPoints = max(0,
@@ -561,9 +570,10 @@ rankingPoints = max(0,
 )
 ```
 
-`ceil` is applied to the **cumulative** box-score counters, not per game. One personal point
-then two more is `ceil(3/10) = 1`, not `1 + 1`. A game closed by hand with no report still
-awards 6 for a win and nothing from the box score. `Tournament.winPoints` is unused.
+applied to the best `N` qualification games (not to the career totals). `ceil` is applied to the
+**cumulative** box-score counters of that subset, not per game. One personal point then two more is
+`ceil(3/10) = 1`, not `1 + 1`. A game closed by hand with no report still awards 6 for a win and
+nothing from the box score. `Tournament.winPoints` is unused.
 
 These points are what the finals generator reads; only qualification matches feed the formula.
 Final-phase reports still update display stats (`matchesPlayed`, `wins`, box score) so the whole
@@ -575,7 +585,7 @@ keep them apart:
 | Counter | Source | Meaning |
 | --- | --- | --- |
 | `matchesPlayed`, `wins` | the game | outcome, from the recorded score |
-| `rankingPoints` | qualification games + reports | standing from the formula above; finals excluded |
+| `rankingPoints` | best N qualification games + reports | standing from the formula above; extras and finals excluded |
 | `pointsScored`, `pointsAllowed` | the game | the **team** score, copied onto all three teammates |
 | `pointsMade`, `assists`, `fouls` | the match report | what this player did personally |
 | `mvpAwards`, `fairPlayAwards` | the match report | the scorekeeper's subjective calls |
@@ -584,11 +594,11 @@ keep them apart:
 with the existing API.
 
 **The layering rule.** Team counters are recomputed from every completed game, individual counters
-from its report, and `rankingPoints` from qualification games and reports only. A qualification
-game closed by hand has no report, so it contributes only the win (6 points) and the team scores.
-A final game updates display stats and never `rankingPoints`. Imprecise basket attribution on a
-qualification report can move `pointsMade` and therefore the standing; the match score still
-decides who won.
+from its report, and `rankingPoints` from the best `N` qualification games and their reports. A
+qualification game closed by hand has no report, so it contributes only the win (6 points) and the
+team scores. A final game updates display stats and never `rankingPoints`. Imprecise basket
+attribution on a qualification report can move `pointsMade` and therefore the standing; the match
+score still decides who won.
 
 All ten counters are engine-managed: `recomputeRegistrationAggregates` recomputes them from scratch
 and `$set`s them, so it is self-healing and a correction needs no reversal logic.
@@ -609,11 +619,12 @@ The two values must not be confused:
 | Lives on | `Player` | `Registration` |
 | Scope | Permanent, across tournaments | One tournament |
 | Set by | Staff, manually | Computed from results |
-| Read by | Team generation, before the tournament starts | Reporting, and Phase 2 allocation |
+| Read by | Team generation and extra-appearance allocation, before the tournament starts | Reporting and finals seating |
 | Value at generation time | Meaningful | Always zero |
 
-This is why balance uses the skill rating and not `rankingPoints`: at generation
-time every player still has zero ranking points, so the ranking carries no signal.
+This is why balance **and extra-appearance allocation** use the skill rating and
+not `rankingPoints`: at generation time every player still has zero ranking
+points, so the ranking carries no signal.
 
 **Default.** The rating is optional. A player without one is treated as **5**, the
 midpoint, so a partially rated roster stays usable and a roster with no ratings at
@@ -816,7 +827,7 @@ The operation:
 1. validates the tournament and returns any readiness blocker (at least `playersPerMatch`
    checked-in players, at least one enabled court, qualification still in `draft`);
 2. calculates target appearances per player;
-3. identifies players receiving an additional appearance;
+3. identifies players receiving an additional appearance (lowest skill rating, seed-broken ties);
 4. generates and scores candidate team splits;
 5. persists the games as an ordered queue, with no court assigned;
 6. locks the roster by moving `Tournament.status` to `qualification`;
@@ -941,14 +952,14 @@ The engine should be designed so that additional constraints can be introduced p
 - no player overlap — enforced at assignment time, by construction;
 - seeded, reproducible randomization;
 - teammate **and** opponent diversity, scored with a lexicographic cost vector;
-- team balance from the player skill rating, inside a tolerance band (§11.2, §12.1).
+- team balance from the player skill rating, inside a tolerance band (§11.2, §12.1);
+- extra appearances assigned to the lowest skill ratings when `N × target` is not divisible by 6.
 
 ### Phase 2 — partially implemented
 
-- ranking from qualification results (`rankingPoints`, frozen into `qualificationRank` at finals
-  generate);
+- ranking from qualification results (`rankingPoints` from the best N qualification games, frozen
+  into `qualificationRank` at finals generate);
 - finals generation from that ranking, including extra matches when N is not divisible by 6;
-- ranking-based additional **qualification** appearances — not yet active (see §9);
 - rating updates driven by results — skill rating remains staff-authored;
 - advanced scoring function with configurable weights — not yet.
 

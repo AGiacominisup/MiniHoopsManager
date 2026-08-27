@@ -231,3 +231,60 @@ test("a final match updates stats but does not move rankingPoints", () => {
   // Qualification win only: 6. The final win, MVP and box score are display stats.
   assert.equal(aggregates.rankingPoints, 6);
 });
+
+const fourWins = () => [
+  buildMatch({ id: "m1", scoreA: 12, scoreB: 7 }),
+  buildMatch({ id: "m2", scoreA: 10, scoreB: 4 }),
+  buildMatch({ id: "m3", scoreA: 9, scoreB: 6 }),
+  buildMatch({ id: "m4", scoreA: 8, scoreB: 5 })
+];
+
+test("ranking at targetGames is identical to scoring every qualification game", () => {
+  const matches = fourWins();
+  const allGames = computeAggregates("a1", matches, new Map());
+  const bestFour = computeAggregates("a1", matches, new Map(), 4);
+
+  assert.equal(allGames.rankingPoints, 24);
+  assert.equal(bestFour.rankingPoints, 24);
+});
+
+test("a weak extra game does not inflate rankingPoints but still counts as played", () => {
+  const matches = [
+    ...fourWins(),
+    buildMatch({ id: "m5", scoreA: 3, scoreB: 11 })
+  ];
+
+  const aggregates = computeAggregates("a1", matches, new Map(), 4);
+
+  assert.equal(aggregates.matchesPlayed, 5);
+  assert.equal(aggregates.wins, 4);
+  assert.equal(aggregates.rankingPoints, 24);
+});
+
+test("a strong extra game replaces the worst of the target games", () => {
+  const matches = [
+    ...fourWins(),
+    buildMatch({ id: "m5", scoreA: 14, scoreB: 6 })
+  ];
+  const report = buildReport({
+    matchId: "m5",
+    lines: [{ registrationId: "a1", points: 8 }],
+    mvp: "a1"
+  });
+
+  const aggregates = computeAggregates("a1", matches, reportsFor(report), 4);
+
+  assert.equal(aggregates.matchesPlayed, 5);
+  assert.equal(aggregates.wins, 5);
+  assert.equal(aggregates.mvpAwards, 1);
+  // Best four: four wins, one of them with MVP and ceil(8/10). 24 + 3 + 1 = 28.
+  assert.equal(aggregates.rankingPoints, 28);
+});
+
+test("mid-qualification ranking uses every game played so far", () => {
+  const matches = fourWins().slice(0, 2);
+  const aggregates = computeAggregates("a1", matches, new Map(), 4);
+
+  assert.equal(aggregates.matchesPlayed, 2);
+  assert.equal(aggregates.rankingPoints, 12);
+});

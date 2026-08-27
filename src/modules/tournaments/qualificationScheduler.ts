@@ -224,6 +224,7 @@ const selectPartition = (
 const buildTargets = (
   playerIds: string[],
   appearancesPerPlayer: number,
+  ratings: Map<string, number>,
   random: () => number
 ): { targets: Map<string, number>; extraAppearances: number } => {
   const totalRequested = playerIds.length * appearancesPerPlayer;
@@ -231,7 +232,14 @@ const buildTargets = (
   const extraAppearances = totalSlots - totalRequested;
   const targets = new Map(playerIds.map((playerId) => [playerId, appearancesPerPlayer]));
 
-  for (const playerId of shuffled(playerIds, random).slice(0, extraAppearances)) {
+  // Shuffle first so equal ratings (including a fully unrated roster) stay
+  // seed-random. The stable sort then puts the lowest ratings first without
+  // disturbing that order among equals.
+  const ordered = shuffled(playerIds, random).sort(
+    (first, second) =>
+      (ratings.get(first) ?? DEFAULT_SKILL_RATING) - (ratings.get(second) ?? DEFAULT_SKILL_RATING)
+  );
+  for (const playerId of ordered.slice(0, extraAppearances)) {
     targets.set(playerId, appearancesPerPlayer + 1);
   }
   return { targets, extraAppearances };
@@ -345,7 +353,12 @@ export const buildQualificationPlan = (
     players.map((player) => [player.registrationId, player.skillRating ?? DEFAULT_SKILL_RATING])
   );
   const random = createRandom(seed);
-  const { targets, extraAppearances } = buildTargets(playerIds, appearancesPerPlayer, random);
+  const { targets, extraAppearances } = buildTargets(
+    playerIds,
+    appearancesPerPlayer,
+    ratings,
+    random
+  );
   const remaining = new Map(targets);
   const teammateCounts = new Map<string, number>();
   const opponentCounts = new Map<string, number>();

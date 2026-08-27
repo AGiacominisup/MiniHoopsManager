@@ -111,7 +111,7 @@ export const openApiSpec = {
           category: { type: "string" },
           winPoints: {
             type: "integer",
-            description: "Unused by standings; rankingPoints uses a fixed formula on registration totals."
+            description: "Unused by standings; rankingPoints uses a fixed formula on the best N qualification games."
           },
           status: {
             type: "string",
@@ -204,13 +204,13 @@ export const openApiSpec = {
             minimum: 0,
             maximum: 10,
             description:
-              "Snapshot of the player's rating taken at registration, and the per-tournament override."
+              "Snapshot of the player's rating taken at registration, and the per-tournament override. Used to balance teams and to assign extra qualification appearances to the lowest ratings."
           },
           rankingPoints: {
             type: "integer",
             minimum: 0,
             description:
-              "Derived standing from qualification totals only: 6 per qualification win, 3 per MVP, 2 per fair play, ceil(pointsMade/10), ceil(assists/8), minus ceil(fouls/5). Final-phase reports do not change this value. Clamped at 0. Tournament.winPoints is ignored."
+              "Derived standing from the best N qualification games only, where N is qualificationAppearancesPerPlayer: 6 per win, 3 per MVP, 2 per fair play, ceil(pointsMade/10), ceil(assists/8), minus ceil(fouls/5), applied to the subset of N games that maximises the score. Extra appearances and final-phase reports do not automatically change this value. Clamped at 0. Tournament.winPoints is ignored."
           },
           matchesPlayed: { type: "integer", minimum: 0 },
           wins: { type: "integer", minimum: 0 },
@@ -660,7 +660,7 @@ export const openApiSpec = {
     "/api/tournaments/{id}/qualification/preview": {
       post: {
         tags: ["Tournaments"], summary: "Preview deterministic 3vs3 qualification matches", security: [{ bearerAuth: [] }],
-        description: "Persists nothing. The metrics report appearance fairness (extraAppearances, maxAppearanceDifference), combination variety (maxTeammatePairCount, maxOpponentPairCount) and team balance (maxSkillDifference, averageSkillDifference, matchesOverSkillTolerance), where a skill difference is the gap between the two teams' summed skill ratings. The roster fingerprint covers the skill ratings, so editing one invalidates the preview.",
+        description: "Persists nothing. Extra appearances (when N × target is not divisible by 6) go to the lowest skill ratings, with seed-broken ties. The metrics report appearance fairness (extraAppearances, maxAppearanceDifference), combination variety (maxTeammatePairCount, maxOpponentPairCount) and team balance (maxSkillDifference, averageSkillDifference, matchesOverSkillTolerance), where a skill difference is the gap between the two teams' summed skill ratings. The roster fingerprint covers the skill ratings, so editing one invalidates the preview.",
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
         requestBody: { content: { "application/json": { schema: { type: "object", properties: { seed: { type: "string" } } } } } },
         responses: { "200": { description: "Qualification plan, metrics, seed and roster fingerprint" }, "409": { description: "Setup not ready" } }
