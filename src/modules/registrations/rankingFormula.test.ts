@@ -1,8 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { computeBestNRankingPoints, computeRankingPoints, sumRankingInputs, type RankingInputs } from "./rankingFormula";
+import {
+  computeBestNRankingPoints,
+  computeRankingPoints,
+  sumRankingInputs,
+  type RankingInputs
+} from "./rankingFormula";
 
-test("awards 6 for a win, 3 for MVP and 2 for fair play", () => {
+test("awards 6 for a win, 4 for MVP and 2 for fair play", () => {
   assert.equal(
     computeRankingPoints({
       wins: 1,
@@ -12,11 +17,11 @@ test("awards 6 for a win, 3 for MVP and 2 for fair play", () => {
       assists: 0,
       fouls: 0
     }),
-    11
+    12
   );
 });
 
-test("ceils box-score totals, not each match", () => {
+test("scores every personal point and assist linearly", () => {
   assert.equal(
     computeRankingPoints({
       wins: 0,
@@ -26,7 +31,7 @@ test("ceils box-score totals, not each match", () => {
       assists: 0,
       fouls: 0
     }),
-    1
+    2
   );
   assert.equal(
     computeRankingPoints({
@@ -37,22 +42,22 @@ test("ceils box-score totals, not each match", () => {
       assists: 0,
       fouls: 0
     }),
-    1
+    6
   );
   assert.equal(
     computeRankingPoints({
       wins: 0,
       mvpAwards: 0,
       fairPlayAwards: 0,
-      pointsMade: 11,
-      assists: 0,
+      pointsMade: 1,
+      assists: 2,
       fouls: 0
     }),
-    2
+    6
   );
 });
 
-test("ceils assists by 8 and subtracts ceiled fouls by 5", () => {
+test("counts each assist as 2 and each foul as -1", () => {
   assert.equal(
     computeRankingPoints({
       wins: 1,
@@ -62,7 +67,7 @@ test("ceils assists by 8 and subtracts ceiled fouls by 5", () => {
       assists: 1,
       fouls: 1
     }),
-    6
+    7
   );
   assert.equal(
     computeRankingPoints({
@@ -73,7 +78,7 @@ test("ceils assists by 8 and subtracts ceiled fouls by 5", () => {
       assists: 8,
       fouls: 6
     }),
-    0
+    10
   );
 });
 
@@ -103,7 +108,10 @@ const win = (pointsMade = 0): RankingInputs => ({
 test("best-N ranking is identical to the full formula when games do not exceed N", () => {
   const games = [win(1), win(2), win(), win()];
   assert.equal(computeBestNRankingPoints(games, 4), computeRankingPoints(sumRankingInputs(games)));
-  assert.equal(computeBestNRankingPoints(games.slice(0, 3), 4), computeRankingPoints(sumRankingInputs(games.slice(0, 3))));
+  assert.equal(
+    computeBestNRankingPoints(games.slice(0, 3), 4),
+    computeRankingPoints(sumRankingInputs(games.slice(0, 3)))
+  );
 });
 
 test("best-N ranking drops a weak extra game and keeps a strong one", () => {
@@ -119,7 +127,8 @@ test("best-N ranking drops a weak extra game and keeps a strong one", () => {
 
   assert.equal(computeBestNRankingPoints(fourWins, 4), 24);
   assert.equal(computeBestNRankingPoints(withLoss, 4), 24);
-  assert.equal(computeBestNRankingPoints(withMvp, 4), 27);
+  // Drop a plain win (6), keep the MVP game (6 + 4).
+  assert.equal(computeBestNRankingPoints(withMvp, 4), 28);
 });
 
 test("best-N ranking is zero with no games or a non-positive target", () => {

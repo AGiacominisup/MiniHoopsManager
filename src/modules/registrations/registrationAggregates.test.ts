@@ -119,8 +119,8 @@ test("adds the individual numbers from the report and leaves the team numbers to
   assert.equal(scorer.fouls, 1);
   assert.equal(scorer.mvpAwards, 1);
   assert.equal(scorer.fairPlayAwards, 0);
-  // win 6 + MVP 3 + ceil(6/10) + ceil(2/8) - ceil(1/5) = 10
-  assert.equal(scorer.rankingPoints, 10);
+  // win 6 + 6 points * 2 + 2 assists * 2 + MVP 4 - 1 foul = 25
+  assert.equal(scorer.rankingPoints, 25);
   // The team score stays what the match says, whatever the attribution.
   assert.equal(scorer.pointsScored, 12);
 
@@ -167,7 +167,7 @@ test("sums across matches and ignores matches the player was not in", () => {
   assert.equal(aggregates.pointsAllowed, 16);
 });
 
-test("ceils personal points on tournament totals, not per match", () => {
+test("counts every personal point and assist on the chosen games", () => {
   const matches = [
     buildMatch({ id: "m1", scoreA: 12, scoreB: 7 }),
     buildMatch({ id: "m2", scoreA: 8, scoreB: 5 })
@@ -181,13 +181,13 @@ test("ceils personal points on tournament totals, not per match", () => {
     buildReport({ matchId: "m1", lines: [{ registrationId: "a1", points: 1 }] })
   ));
   assert.equal(afterFirst.pointsMade, 1);
-  // One win + ceil(1/10) = 6 + 1
-  assert.equal(afterFirst.rankingPoints, 7);
+  // One win + 1 point * 2
+  assert.equal(afterFirst.rankingPoints, 8);
 
   const afterSecond = computeAggregates("a1", matches, reports);
   assert.equal(afterSecond.pointsMade, 3);
-  // Two wins + ceil(3/10) = 12 + 1, not 12 + 1 + 1
-  assert.equal(afterSecond.rankingPoints, 13);
+  // Two wins + 3 points * 2
+  assert.equal(afterSecond.rankingPoints, 18);
 });
 
 test("clamps ranking points at zero when fouls outweigh the rest", () => {
@@ -277,8 +277,8 @@ test("a strong extra game replaces the worst of the target games", () => {
   assert.equal(aggregates.matchesPlayed, 5);
   assert.equal(aggregates.wins, 5);
   assert.equal(aggregates.mvpAwards, 1);
-  // Best four: four wins, one of them with MVP and ceil(8/10). 24 + 3 + 1 = 28.
-  assert.equal(aggregates.rankingPoints, 28);
+  // Best four: drop a paper win (6), keep the extra (win 6 + 8 points * 2 + MVP 4).
+  assert.equal(aggregates.rankingPoints, 44);
 });
 
 test("mid-qualification ranking uses every game played so far", () => {

@@ -100,7 +100,7 @@ to that user.
 | Users | `admin` | `admin` |
 
 Referee endpoints require a normal user JWT with role `referee`. A referee can request availability
-for an assigned-court match, but only the referee selected by staff can start or report it.
+for an assigned-court match, but only the referee selected by staff can report it.
 
 ## Common Responses
 
@@ -170,8 +170,8 @@ snapshots, not persistent entities. A tournament is prepared and started with th
 3. Optionally read `GET /tournaments/:id/setup` for the current counts and blockers.
 4. Start the tournament with `POST /tournaments/:id/start`. This is the single "start" action: it
   freezes the roster, generates the match queue and moves the tournament to `qualification`.
-5. Reserve a queued match on a court, start it, then complete it. Completion reserves the next
-  compatible match on the same court but does not start it.
+5. Reserve a queued match on a court, then complete it with a report (or the paper fallback).
+  Completion reserves the next compatible match on the same court.
 6. When every qualification match has a report, `GET /tournaments/:id/setup` reports
   `finalsReadiness.ready: true`. Staff then calls `POST /tournaments/:id/finals/generate`.
 7. Final matches are queued the same way as qualification. Completing the last final moves the
@@ -269,7 +269,7 @@ Silver / Bronze / Copper: Gold 1–6, Silver 7–12, Bronze 13–18, Copper extr
 
 Fewer than 6 checked-in players is `409`. Exactly 6 produces one match and no extra.
 
-Final matches are assigned, started and reported like qualification matches.
+Final matches are assigned and reported like qualification matches.
 `POST /tournaments/:id/courts/:courtId/assign-next` in `finals` only considers `phase: "final"`
 queued games. Completing the last final moves the tournament to `completed`.
 
@@ -356,7 +356,8 @@ and the response `summary` reports how many of each were deleted. Players are ne
 registrations for that tournament.
 
 A player can only be registered if they have a name or a jersey number — at least one is required so
-they can be identified. When the player has a jersey number it is always copied onto the
+they can be identified. Jersey numbers are **strings of 1 or 2 digits**, so `"00"` is distinct from
+`"0"`. When the player has a jersey number it is always copied onto the
 registration, including when they also have a name, and can later be overridden per tournament.
 Parents may withhold a child's name; some tournaments play without numbered jerseys. When both are
 known, both are stored and returned.
@@ -368,7 +369,7 @@ export interface Player {
   _id: string;
   firstName?: string;
   lastName?: string;
-  jerseyNumber?: number;
+  jerseyNumber?: string; // 1 or 2 digits; "00" is distinct from "0"
   birthDate?: string;
   guardianContact?: string;
   skillRating?: number; // 0-10, perceived strength; used to balance generated teams
@@ -391,7 +392,7 @@ Create or update payload example:
 {
   "firstName": "Mario",
   "lastName": "Rossi",
-  "jerseyNumber": 12,
+  "jerseyNumber": "12",
   "birthDate": "2015-05-20T00:00:00.000Z",
   "guardianContact": "+39 333 0000000",
   "skillRating": 7
@@ -413,7 +414,7 @@ export interface Registration {
   _id: string;
   tournamentId: string;
   playerId: string;
-  jerseyNumber?: number;
+  jerseyNumber?: string; // snapshot of Player.jerseyNumber, and the per-tournament override
   skillRating?: number; // snapshot of Player.skillRating, and the per-tournament override
   rankingPoints: number; // derived standing; see formula below
   matchesPlayed: number;
@@ -448,7 +449,7 @@ Create payload:
 {
   "tournamentId": "66b000000000000000000001",
   "playerId": "66b000000000000000000002",
-  "jerseyNumber": 12,
+  "jerseyNumber": "12",
   "skillRating": 7,
   "finalGroupId": null
 }
@@ -480,19 +481,19 @@ kept, so a weak extra game cannot inflate the standing used to seat the finals:
 ```text
 rankingPoints = max(0,
     qualificationWins           * 6
-  + qualificationMvpAwards      * 3
+  + qualificationPointsMade     * 2
+  + qualificationAssists        * 2
+  + qualificationMvpAwards      * 4
   + qualificationFairPlayAwards * 2
-  + ceil(qualificationPointsMade / 10)
-  + ceil(qualificationAssists   / 8)
-  - ceil(qualificationFouls     / 5)
+  - qualificationFouls          * 1
 )
 ```
 
 A final-phase report still updates the display counters so the whole tournament can be shown on
-stats screens; it never moves `rankingPoints` or `qualificationRank`. The `ceil` terms use the
-**totals of the chosen N games**, not each match on its own: 1 personal point then 2 more is
-`ceil(3/10) = 1`, not `1 + 1`. A paper completion with no report still awards `6` for a qualification
-win and nothing from the box score. `Tournament.winPoints` is ignored by this formula.
+stats screens; it never moves `rankingPoints` or `qualificationRank`. Personal points and assists
+are scored linearly so two teammates with the same result are ranked by what they did. A paper
+completion with no report still awards `6` for a qualification win and nothing from the box score.
+`Tournament.winPoints` is ignored by this formula.
 
 `pointsScored` is the **team** score copied onto all three teammates — individual scoring is
 `pointsMade`. The names are kept for compatibility.
@@ -508,10 +509,10 @@ from the completed matches and their reports. It returns
 ## Matches
 
 Generated qualification matches have no scheduled time and no court until they are assigned. They
-move through `queued -> ready -> in_progress -> completed`; `ready` means reserved on a court and
-waiting for an explicit Start command. `ready -> completed` is also reachable, but only by submitting
-a [match report](#match-reports): a report proves the game was played, so a forgotten Start does not
-strand it.
+move through `queued -> ready -> completed`. `ready` means reserved on a court and waiting for a
+[match report](#match-reports) (or the paper `POST /matches/:id/complete` fallback). `in_progress`
+is kept for matches that were started before the start step was removed; report and complete still
+accept it.
 
 Qualification and final matches are owned by the tournament generator: `POST` and `PATCH` reject
 both `phase: "qualification"` and `phase: "final"` with `409`, and generated matches cannot be
@@ -532,8 +533,8 @@ Use it to enable or disable the match in the court-assignment UI: when a court f
 matches with `availability.playable === true` can be assigned to it. `busyRegistrationIds` lists the
 players that are blocking the match, so the UI can explain why.
 
-Availability is computed at read time and changes whenever any match starts or completes — refresh
-the list after every assignment, start, or completion.
+Availability is computed at read time and changes whenever any match is assigned or completes — refresh
+the list after every assignment, completion, or report.
 
 ```ts
 export type MatchPhase = "qualification" | "final";
@@ -546,7 +547,7 @@ export interface MatchAvailability {
 
 export interface MatchPlayer {
   registrationId: string;
-  jerseyNumber?: number; // present when known
+  jerseyNumber?: string; // present when known; 1 or 2 digits, so "00" is valid
   name?: string;         // present when known
   skillRating?: number;  // the rating the match was balanced on
 }
@@ -584,7 +585,6 @@ both returned, including on the referee scorer endpoints.
 | `DELETE` | `/matches/:id` | `{ message }` |
 | `POST` | `/matches/:id/assign` | `{ message, match }` |
 | `POST` | `/tournaments/:id/courts/:courtId/assign-next` | `{ match: Match | null }` |
-| `POST` | `/matches/:id/start` | `{ message, match }` |
 | `POST` | `/matches/:id/complete` | `{ message, match, nextMatch, idempotent }` |
 
 ### Assigning a match to a court
@@ -594,8 +594,8 @@ POST /api/matches/:id/assign
 { "courtId": "66b000000000000000000010" }
 ```
 
-Binds a `queued` match to a free court and moves it to `ready`, meaning reserved and waiting for
-`POST /matches/:id/start`. The court must belong to the match's tournament and be enabled.
+Binds a `queued` match to a free court and moves it to `ready`: reserved on that court and waiting
+for a report (or paper complete). The court must belong to the match's tournament and be enabled.
 
 The player-overlap rule is re-checked inside the transaction, so a match that looked playable in a
 stale list is refused rather than double-booking a player:
@@ -617,12 +617,12 @@ selection automatically on the freed court and returns the reservation as `nextM
 
 ### Frontend court workflow
 
-The frontend should treat court assignment and match start as two separate actions. Assignment is a
-reservation; it does not mean that the game has started. The state machine for generated qualification
-matches is:
+The frontend should treat court assignment as putting the game on the floor. There is no separate
+start call: the next action is the report (or paper complete). The state machine for generated
+qualification matches is:
 
 ```text
-queued --assign--> ready --start--> in_progress --complete/report--> completed
+queued --assign--> ready --complete/report--> completed
                          ^                                      |
                          |                                      +--> nextMatch: ready | null
                          +---------- next court reservation ----+
@@ -636,12 +636,11 @@ The normal staff/operator flow is:
 2. When a court is free, either call `POST /matches/:matchId/assign` with the selected `courtId`, or
    call `POST /tournaments/:id/courts/:courtId/assign-next` and let the backend choose.
 3. Refresh the match list. The assigned match is now `ready`, has the selected `courtId`, and its six
-   players are considered busy. The operator can show a "ready to start" state on the court.
-4. When play begins, call `POST /matches/:matchId/start`. The match becomes `in_progress`.
-5. When play ends, prefer submitting a match report. A report completes the match and automatically
+   players are considered busy. The court is ready to play.
+4. When play ends, prefer submitting a match report. A report completes the match and automatically
    reserves the next compatible match on the same court. For the paper/manual fallback, call
-   `POST /matches/:matchId/complete` with `scoreA` and `scoreB`; this endpoint requires the match to
-   be `in_progress` and also returns the next reservation.
+   `POST /matches/:matchId/complete` with `scoreA` and `scoreB`; this also works from `ready` and
+   returns the next reservation.
 
 The assignment response has this shape:
 
@@ -673,16 +672,16 @@ blindly:
 | `404` | Match, tournament, or enabled court not found | Refresh tournament data and show an error |
 | `409` | Court occupied, match no longer queued, players busy, or concurrent assignment | Refresh matches and let the operator choose again |
 
-After every assignment, start, completion, or report submission, refresh at least the affected court
+After every assignment, completion, or report submission, refresh at least the affected court
 and the queued matches. A polling interval of 5-10 seconds is appropriate for an operator dashboard;
 the response from the action itself should be applied immediately so the UI does not wait for the next
 poll.
 
-### Starting from the scorer app
+### Reporting from the scorer app
 
 After login, the referee loads the tournament and court list, then requests availability for a match
 already assigned to a court. Once staff selects the referee, `GET /referee/matches/:id` returns the
-match. The referee can then start it and submit its report. A new match on the same court requires a
+match. The referee then submits its report. A new match on the same court requires a
 new availability request and staff selection.
 
 Match payload shape (generated finals use this composition; `POST /matches` refuses both
@@ -702,16 +701,16 @@ Match payload shape (generated finals use this composition; `POST /matches` refu
     {
       "side": "A",
       "players": [
-        { "registrationId": "66b000000000000000000101", "jerseyNumber": 4, "name": "Mario Rossi" },
-        { "registrationId": "66b000000000000000000102", "jerseyNumber": 7 },
+        { "registrationId": "66b000000000000000000101", "jerseyNumber": "4", "name": "Mario Rossi" },
+        { "registrationId": "66b000000000000000000102", "jerseyNumber": "00" },
         { "registrationId": "66b000000000000000000103", "name": "Luca Bianchi" }
       ]
     },
     {
       "side": "B",
       "players": [
-        { "registrationId": "66b000000000000000000104", "jerseyNumber": 5, "name": "Anna Verdi" },
-        { "registrationId": "66b000000000000000000105", "jerseyNumber": 8 },
+        { "registrationId": "66b000000000000000000104", "jerseyNumber": "5", "name": "Anna Verdi" },
+        { "registrationId": "66b000000000000000000105", "jerseyNumber": "8" },
         { "registrationId": "66b000000000000000000106", "name": "Giorgio Neri" }
       ]
     }
@@ -745,7 +744,6 @@ can operate a match only after staff selects that referee for it.
   | `POST` | `/referee/matches/:id/availability` | `referee` | `{ availability }` |
   | `DELETE` | `/referee/matches/:id/availability` | `referee` | `{ availability }` |
   | `GET` | `/referee/matches/:id` | `referee` | `{ match }`, only when selected |
-  | `POST` | `/referee/matches/:id/start` | selected `referee` | `{ message, match }` |
 | `POST` | `/referee/matches/:id/report` | selected `referee` | report result and `nextMatch` |
 
 Availability can be requested only for an incomplete match already assigned to a court. Staff sees
@@ -758,14 +756,14 @@ POST /api/matches/:id/referee-assignment
 ```
 
 Only one referee can be selected. The selection is per match and is not inherited by the next match.
-The selected referee is the only referee allowed to read, start and report that match; another referee
+The selected referee is the only referee allowed to read and report that match; another referee
 receives `403`.
 
-### Starting from the scorer app
+### Reporting from the scorer app
 
 After login, the referee loads the tournament and court list, then requests availability for a match
 already assigned to a court. Once staff selects the referee, `GET /referee/matches/:id` returns the
-match. The referee can then start it and submit its report. A new match on the same court requires a
+match. The referee then submits its report. A new match on the same court requires a
 new availability request and staff selection.
 
 ## Match reports
@@ -860,8 +858,8 @@ compatible match on the freed court and returns it as `nextMatch`, and closes th
 nothing is left to play — exactly like `POST /matches/:id/complete`, which remains available for the
 paper fallback.
 
-A `ready` match can be reported directly: a report proves the game was played, so forgetting to press
-Start does not strand it.
+A `ready` match is reported directly: assignment is what puts the game on the court, and the report
+is what closes it.
 
 | Status | Meaning |
 | --- | --- |

@@ -1,10 +1,10 @@
 import { z } from "zod";
-import { objectIdSchema } from "../../utils/validation";
+import { jerseyNumberSchema, objectIdSchema } from "../../utils/validation";
 
 const matchPlayerSchema = z
   .object({
     registrationId: objectIdSchema,
-    jerseyNumber: z.number().int().nonnegative().optional(),
+    jerseyNumber: jerseyNumberSchema,
     name: z.string().trim().min(1).optional()
   })
   .refine((player) => player.jerseyNumber !== undefined || player.name !== undefined, {

@@ -188,26 +188,7 @@ export const buildAvailabilityMap = async (
   );
 };
 
-export const startMatch = async (matchId: string) => {
-  const match = await MatchModel.findOneAndUpdate(
-    { _id: matchId, status: "ready" },
-    { $set: { status: "in_progress", startedAt: new Date() } },
-    { new: true, runValidators: true }
-  );
-  if (!match) {
-    const existing = await MatchModel.findById(matchId);
-    if (!existing) {
-      throw new ApiError(404, "Match not found");
-    }
-    throw new ApiError(409, "Only a ready match can be started");
-  }
-  return match;
-};
-
 export interface CompleteMatchOptions {
-  // A submitted report proves the game was played, so a court operator who
-  // forgot to press Start must not be able to strand it.
-  allowReady?: boolean;
   // The report path owns every registration counter through
   // recomputeRegistrationAggregates. Two writers to the same counters is how
   // these totals would drift.
@@ -241,16 +222,9 @@ export const completeMatchWithSession = async (
     return { match, nextMatch: null, idempotent: true };
   }
 
-  const startable = options.allowReady
-    ? match.status === "in_progress" || match.status === "ready"
-    : match.status === "in_progress";
-  if (!startable || !match.courtId) {
-    throw new ApiError(
-      409,
-      options.allowReady
-        ? "Only a ready or in-progress match can be completed"
-        : "Only an in-progress match can be completed"
-    );
+  const completable = match.status === "ready" || match.status === "in_progress";
+  if (!completable || !match.courtId) {
+    throw new ApiError(409, "Only a ready or in-progress match can be completed");
   }
 
   match.set({

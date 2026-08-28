@@ -10,7 +10,7 @@ const B = ["b1", "b2", "b3"];
 
 const buildMatch = (sides: MatchSide[] = ["A", "B"]): MatchDocument => {
   const players = (ids: string[]) =>
-    ids.map((id, index) => ({ registrationId: id as never, jerseyNumber: index + 1 }));
+    ids.map((id, index) => ({ registrationId: id as never, jerseyNumber: String(index + 1) }));
   const teams = [
     { side: "A" as MatchSide, players: players(A) },
     { side: "B" as MatchSide, players: players(B) }

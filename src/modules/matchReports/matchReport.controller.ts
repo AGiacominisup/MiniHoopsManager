@@ -1,11 +1,8 @@
 import type { Request, Response } from "express";
 import { ApiError } from "../../utils/ApiError";
 import { idParamsSchema } from "../../utils/validation";
-import { MatchModel } from "../matches/match.model";
-import { startMatch } from "../matches/matchQueue.service";
 import { assertAssignedReferee } from "../matches/matchReferee.service";
 import {
-  assertMatchBelongsToScope,
   correctMatchReport,
   loadMatchReport,
   loadRefereeContext,
@@ -36,21 +33,6 @@ export const getRefereeContext = async (req: Request, res: Response): Promise<vo
   const context = await loadRefereeContext(refereeScope(req));
 
   res.status(200).json(context);
-};
-
-export const startRefereeMatch = async (req: Request, res: Response): Promise<void> => {
-  const { id } = idParamsSchema.parse(req.params);
-  const scope = refereeScope(req);
-
-  const existing = await MatchModel.findById(id);
-  if (!existing) {
-    throw new ApiError(404, "Match not found");
-  }
-  assertMatchBelongsToScope(existing, scope);
-
-  const match = await startMatch(id);
-
-  res.status(200).json({ message: "Match started", match });
 };
 
 export const submitRefereeMatchReport = async (req: Request, res: Response): Promise<void> => {
@@ -98,13 +80,6 @@ export const submitStaffMatchReport = async (req: Request, res: Response): Promi
     warnings: result.warnings,
     idempotent: result.idempotent
   });
-};
-
-export const startAssignedRefereeMatch = async (req: Request, res: Response): Promise<void> => {
-  const { id } = idParamsSchema.parse(req.params);
-  await assertAssignedReferee(id, requireUserId(req));
-  const match = await startMatch(id);
-  res.status(200).json({ message: "Match started", match });
 };
 
 export const submitAssignedRefereeMatchReport = async (

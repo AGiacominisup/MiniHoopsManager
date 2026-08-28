@@ -168,7 +168,7 @@ export const submitMatchReport = async (
           body.scoreA,
           body.scoreB,
           session,
-          { allowReady: true, skipRegistrationAggregates: true }
+          { skipRegistrationAggregates: true }
         );
         nextMatch = completion.nextMatch;
       }

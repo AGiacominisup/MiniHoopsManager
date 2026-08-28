@@ -4,7 +4,20 @@
  * At least one of name or jersey number is required so a player can be
  * identified. When both exist they are both kept: parents may withhold a
  * child's name, and some tournaments play without numbered jerseys.
+ *
+ * Jersey numbers are strings so "00" is distinct from "0". Values still stored
+ * as numbers in older documents are normalized on read.
  */
+
+export type JerseyNumberInput = string | number | null | undefined;
+
+export const normalizeJerseyNumber = (value?: JerseyNumberInput): string | undefined => {
+  if (value === undefined || value === null || value === "") {
+    return undefined;
+  }
+  const asString = String(value).trim();
+  return asString === "" ? undefined : asString;
+};
 
 export const playerDisplayName = (
   player?: { firstName?: string | null; lastName?: string | null } | null
@@ -14,15 +27,10 @@ export const playerDisplayName = (
 };
 
 export const resolveJerseyNumber = (
-  registrationJerseyNumber?: number | null,
-  playerJerseyNumber?: number | null
-): number | undefined => {
-  const value = registrationJerseyNumber ?? playerJerseyNumber;
-  if (value === undefined || value === null) {
-    return undefined;
-  }
-  return value;
-};
+  registrationJerseyNumber?: JerseyNumberInput,
+  playerJerseyNumber?: JerseyNumberInput
+): string | undefined =>
+  normalizeJerseyNumber(registrationJerseyNumber) ?? normalizeJerseyNumber(playerJerseyNumber);
 
-export const hasPlayerDisplayIdentity = (name?: string, jerseyNumber?: number): boolean =>
-  Boolean(name) || jerseyNumber !== undefined;
+export const hasPlayerDisplayIdentity = (name?: string, jerseyNumber?: JerseyNumberInput): boolean =>
+  Boolean(name) || normalizeJerseyNumber(jerseyNumber) !== undefined;

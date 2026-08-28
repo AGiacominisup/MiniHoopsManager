@@ -1,12 +1,13 @@
 import { type HydratedDocument, Schema, model } from "mongoose";
 
 export type MatchPhase = "qualification" | "final";
+/** `in_progress` is kept for matches started before the start step was removed. New games go queued → ready → completed. */
 export type MatchStatus = "scheduled" | "queued" | "ready" | "in_progress" | "completed";
 export type MatchSide = "A" | "B";
 
 export interface MatchPlayerSnapshot {
   registrationId: Schema.Types.ObjectId;
-  jerseyNumber?: number;
+  jerseyNumber?: string;
   name?: string;
   skillRating?: number;
 }
@@ -40,7 +41,7 @@ export interface MatchDocument {
 const matchPlayerSnapshotSchema = new Schema<MatchPlayerSnapshot>(
   {
     registrationId: { type: Schema.Types.ObjectId, ref: "Registration", required: true },
-    jerseyNumber: { type: Number, min: 0 },
+    jerseyNumber: { type: String, match: /^\d{1,2}$/ },
     name: { type: String, trim: true },
     skillRating: { type: Number, min: 0, max: 10 }
   },

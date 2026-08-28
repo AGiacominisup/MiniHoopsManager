@@ -8,6 +8,7 @@ import { MatchReportModel } from "../matchReports/matchReport.model";
 import { RegistrationModel } from "../registrations/registration.model";
 import { recomputeRegistrationAggregates } from "../registrations/registrationAggregates.service";
 import { PlayerModel } from "../players/player.model";
+import { resolveJerseyNumber } from "../players/playerIdentity";
 import { assignNextMatch } from "../matches/matchQueue.service";
 import { loadTournament, loadUnlockedTournament } from "./tournament.guards";
 import { TournamentModel } from "./tournament.model";
@@ -188,8 +189,9 @@ export const bulkRegisterPlayers = async (req: Request, res: Response): Promise<
       .map((player) => {
         // At least one of name or jersey number is required. When both exist
         // both are kept, so the scorer can show a number even for a named child.
+        const jerseyNumber = resolveJerseyNumber(undefined, player.jerseyNumber);
         const hasName = Boolean(player.firstName || player.lastName);
-        if (!hasName && player.jerseyNumber === undefined) {
+        if (!hasName && jerseyNumber === undefined) {
           throw new ApiError(
             400,
             `Player ${String(player._id)} needs a name or a jersey number before registration`
@@ -198,7 +200,7 @@ export const bulkRegisterPlayers = async (req: Request, res: Response): Promise<
         return {
           tournamentId: id,
           playerId: player._id,
-          ...(player.jerseyNumber !== undefined && { jerseyNumber: player.jerseyNumber }),
+          ...(jerseyNumber !== undefined && { jerseyNumber }),
           // The rating is always snapshotted: it freezes the player's strength
           // for this tournament and can then be overridden per tournament
           // without touching the player record.

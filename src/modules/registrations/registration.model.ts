@@ -6,7 +6,7 @@ export type AttendanceStatus = "registered" | "checked_in" | "withdrawn";
 export interface RegistrationDocument {
   tournamentId: Schema.Types.ObjectId;
   playerId: Schema.Types.ObjectId;
-  jerseyNumber?: number;
+  jerseyNumber?: string;
   skillRating?: number;
   rankingPoints: number;
   matchesPlayed: number;
@@ -32,7 +32,7 @@ const registrationSchema = new Schema<RegistrationDocument>(
   {
     tournamentId: { type: Schema.Types.ObjectId, ref: "Tournament", required: true },
     playerId: { type: Schema.Types.ObjectId, ref: "Player", required: true },
-    jerseyNumber: { type: Number, min: 0 },
+    jerseyNumber: { type: String, match: /^\d{1,2}$/ },
     // Snapshot of Player.skillRating taken at registration time, and the
     // per-tournament override. Left unset when the player has no rating, so an
     // absent value means "fall back to the player record".

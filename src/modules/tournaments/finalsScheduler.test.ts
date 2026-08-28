@@ -16,7 +16,7 @@ const player = (
   overrides: Partial<RankedFinalsPlayer> = {}
 ): RankedFinalsPlayer => ({
   registrationId: `registration-${String(rankHint).padStart(2, "0")}`,
-  jerseyNumber: rankHint,
+  jerseyNumber: String(rankHint),
   rankingPoints: 100 - rankHint,
   wins: 10 - Math.floor(rankHint / 3),
   pointsMade: 50 - rankHint,

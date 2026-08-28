@@ -1,10 +1,10 @@
 import { z } from "zod";
-import { objectIdSchema } from "../../utils/validation";
+import { jerseyNumberSchema, objectIdSchema } from "../../utils/validation";
 
 const registrationFields = {
   tournamentId: objectIdSchema,
   playerId: objectIdSchema,
-  jerseyNumber: z.number().int().nonnegative().optional(),
+  jerseyNumber: jerseyNumberSchema,
   skillRating: z.number().int().min(0).max(10).optional(),
   rankingPoints: z.number().int().nonnegative().optional(),
   matchesPlayed: z.number().int().nonnegative().optional(),

@@ -14,8 +14,7 @@ import {
 import {
   assignMatchToCourt,
   buildAvailabilityMap,
-  completeMatch,
-  startMatch
+  completeMatch
 } from "./matchQueue.service";
 
 interface MatchReferenceTeam {
@@ -168,12 +167,6 @@ export const assignQueuedMatch = async (req: Request, res: Response): Promise<vo
   const { courtId } = assignMatchSchema.parse(req.body);
   const match = await assignMatchToCourt(id, courtId);
   res.status(200).json({ message: "Match assigned", match });
-};
-
-export const startQueuedMatch = async (req: Request, res: Response): Promise<void> => {
-  const { id } = idParamsSchema.parse(req.params);
-  const match = await startMatch(id);
-  res.status(200).json({ message: "Match started", match });
 };
 
 export const completeQueuedMatch = async (req: Request, res: Response): Promise<void> => {

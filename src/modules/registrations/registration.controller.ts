@@ -3,6 +3,7 @@ import { ApiError } from "../../utils/ApiError";
 import { idParamsSchema } from "../../utils/validation";
 import { MatchModel } from "../matches/match.model";
 import { PlayerModel } from "../players/player.model";
+import { resolveJerseyNumber } from "../players/playerIdentity";
 import { assertRosterUnlocked, loadUnlockedTournament } from "../tournaments/tournament.guards";
 import { TournamentModel } from "../tournaments/tournament.model";
 import { RegistrationModel } from "./registration.model";
@@ -18,7 +19,7 @@ const validateRegistrationReferences = async (
   tournamentId: string,
   playerId: string,
   finalGroupId?: string | null
-): Promise<{ skillRating?: number; jerseyNumber?: number }> => {
+): Promise<{ skillRating?: number; jerseyNumber?: string }> => {
   const [tournament, player] = await Promise.all([
     TournamentModel.findById(tournamentId),
     PlayerModel.findById(playerId).select({ skillRating: 1, jerseyNumber: 1 }).lean()
@@ -63,7 +64,7 @@ export const createRegistration = async (req: Request, res: Response): Promise<v
   // for this tournament, so later edits to the player record leave this roster
   // untouched. A name-only or number-only player is still valid.
   const skillRating = body.skillRating ?? player.skillRating;
-  const jerseyNumber = body.jerseyNumber ?? player.jerseyNumber;
+  const jerseyNumber = resolveJerseyNumber(body.jerseyNumber, player.jerseyNumber);
   const registration = await RegistrationModel.create({
     ...body,
     ...(skillRating !== undefined && { skillRating }),

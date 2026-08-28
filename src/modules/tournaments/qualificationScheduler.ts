@@ -1,6 +1,6 @@
 export interface QualificationPlayer {
   registrationId: string;
-  jerseyNumber?: number;
+  jerseyNumber?: string;
   name?: string;
   /** Perceived strength, 0 to 10. Absent means DEFAULT_SKILL_RATING. */
   skillRating?: number;

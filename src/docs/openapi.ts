@@ -174,7 +174,11 @@ export const openApiSpec = {
           _id: { type: "string" },
           firstName: { type: "string" },
           lastName: { type: "string" },
-          jerseyNumber: { type: "integer", minimum: 0 },
+          jerseyNumber: {
+            type: "string",
+            pattern: "^\\d{1,2}$",
+            description: "1 or 2 digits. \"00\" is distinct from \"0\". Integers from older clients are accepted and stored as their decimal string."
+          },
           birthDate: { type: "string", format: "date-time" },
           guardianContact: { type: "string" },
           skillRating: {
@@ -194,10 +198,10 @@ export const openApiSpec = {
           tournamentId: { type: "string" },
           playerId: { type: "string" },
           jerseyNumber: {
-            type: "integer",
-            minimum: 0,
+            type: "string",
+            pattern: "^\\d{1,2}$",
             description:
-              "Snapshot of the player's jersey number taken at registration, and the per-tournament override. Copied even when the player also has a name."
+              "Snapshot of the player's jersey number taken at registration, and the per-tournament override. 1 or 2 digits, so \"00\" is distinct from \"0\". Copied even when the player also has a name."
           },
           skillRating: {
             type: "integer",
@@ -210,7 +214,7 @@ export const openApiSpec = {
             type: "integer",
             minimum: 0,
             description:
-              "Derived standing from the best N qualification games only, where N is qualificationAppearancesPerPlayer: 6 per win, 3 per MVP, 2 per fair play, ceil(pointsMade/10), ceil(assists/8), minus ceil(fouls/5), applied to the subset of N games that maximises the score. Extra appearances and final-phase reports do not automatically change this value. Clamped at 0. Tournament.winPoints is ignored."
+              "Derived standing from the best N qualification games only, where N is qualificationAppearancesPerPlayer: 6 per win, 2 per personal point, 2 per assist, 4 per MVP, 2 per fair play, minus 1 per foul, applied to the subset of N games that maximises the score. Extra appearances and final-phase reports do not automatically change this value. Clamped at 0. Tournament.winPoints is ignored."
           },
           matchesPlayed: { type: "integer", minimum: 0 },
           wins: { type: "integer", minimum: 0 },
@@ -237,7 +241,12 @@ export const openApiSpec = {
           finalGroupId: { type: "string", nullable: true },
           phase: { type: "string", enum: ["qualification", "final"] },
           scheduledAt: { type: "string", format: "date-time" },
-          status: { type: "string", enum: ["scheduled", "queued", "ready", "in_progress", "completed"] },
+          status: {
+            type: "string",
+            enum: ["scheduled", "queued", "ready", "in_progress", "completed"],
+            description:
+              "queued → ready (assigned to a court) → completed (report or paper complete). in_progress is legacy for matches started before the start step was removed."
+          },
           queuePosition: { type: "integer", minimum: 0 },
           scoreA: { type: "integer", minimum: 0 },
           scoreB: { type: "integer", minimum: 0 },
@@ -260,10 +269,10 @@ export const openApiSpec = {
                     properties: {
                       registrationId: { type: "string" },
                       jerseyNumber: {
-                        type: "integer",
-                        minimum: 0,
+                        type: "string",
+                        pattern: "^\\d{1,2}$",
                         description:
-                          "Present when known. At least one of jerseyNumber or name is required; both are returned when both exist."
+                          "Present when known. 1 or 2 digits, so \"00\" is valid. At least one of jerseyNumber or name is required; both are returned when both exist."
                       },
                       name: {
                         type: "string",
@@ -808,22 +817,15 @@ export const openApiSpec = {
     "/api/matches/{id}/assign": {
       post: {
         tags: ["Matches"], summary: "Assign a queued match to a free court", security: [{ bearerAuth: [] }],
-        description: "Moves the match to ready. Refused when the court is taken or any of the six players is already engaged in a ready or in-progress match.",
+        description: "Moves the match to ready: on the court and waiting for a report or paper complete. Refused when the court is taken or any of the six players is already engaged in a ready or in-progress match.",
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
         requestBody: { required: true, content: { "application/json": { schema: { type: "object", required: ["courtId"], properties: { courtId: { type: "string" } } } } } },
         responses: { "200": { description: "Match reserved on the court" }, "404": { description: "Match or enabled court not found" }, "409": { description: "Match not queued, court occupied, or players busy" } }
       }
     },
-    "/api/matches/{id}/start": {
-      post: {
-        tags: ["Matches"], summary: "Start a ready match", security: [{ bearerAuth: [] }],
-        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
-        responses: { "200": { description: "Match started" }, "409": { description: "Match is not ready" } }
-      }
-    },
     "/api/matches/{id}/complete": {
       post: {
-        tags: ["Matches"], summary: "Complete a match and reserve the next one", security: [{ bearerAuth: [] }],
+        tags: ["Matches"], summary: "Complete a ready match and reserve the next one", security: [{ bearerAuth: [] }],
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
         requestBody: { required: true, content: { "application/json": { schema: { type: "object", required: ["scoreA", "scoreB"], properties: { scoreA: { type: "integer", minimum: 0 }, scoreB: { type: "integer", minimum: 0 } } } } } },
         responses: { "200": { description: "Completed match, next ready match and idempotency flag" }, "409": { description: "Invalid transition or changed result" } }
@@ -877,13 +879,6 @@ export const openApiSpec = {
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
         requestBody: { required: true, content: { "application/json": { schema: { type: "object", required: ["refereeUserId"], properties: { refereeUserId: { type: "string" } } } } } },
         responses: { "200": { description: "Referee selected" }, "404": { description: "Pending availability not found" }, "409": { description: "Match cannot be assigned" } }
-      }
-    },
-    "/api/referee/matches/{id}/start": {
-      post: {
-        tags: ["Referee"], summary: "Start an assigned match", security: [{ bearerAuth: [] }],
-        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
-        responses: { "200": { description: "Match started" }, "403": { description: "Referee is not assigned to this match" }, "409": { description: "Match is not ready" } }
       }
     },
     "/api/referee/matches/{id}/report": {

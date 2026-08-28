@@ -157,8 +157,7 @@ rather than at generation time, and it holds by construction no matter how long 
 Among the eligible candidates the engine prefers those with the fewest players from the game that
 just finished, so players get a break before playing again.
 
-Completing a game automatically reserves the next compatible game on the freed court, without
-starting it.
+Completing a game automatically reserves the next compatible game on the freed court.
 
 ## 5.1 Choosing the game by hand
 
@@ -179,7 +178,7 @@ a no-op, so a double click does not fail.
 ## 5.2 Reporting playability
 
 Manual selection only works if the client knows what is selectable, and the answer changes every
-time a game starts or ends. Every **queued** game returned by `GET /matches` and `GET /matches/{id}`
+time a game is assigned or ends. Every **queued** game returned by `GET /matches` and `GET /matches/{id}`
 therefore carries the overlap check pre-computed:
 
 ```text
@@ -562,18 +561,18 @@ replace a worse one.
 ```text
 rankingPoints = max(0,
     qualificationWins           * 6
-  + qualificationMvpAwards      * 3
+  + qualificationPointsMade     * 2
+  + qualificationAssists        * 2
+  + qualificationMvpAwards      * 4
   + qualificationFairPlayAwards * 2
-  + ceil(qualificationPointsMade / 10)
-  + ceil(qualificationAssists   / 8)
-  - ceil(qualificationFouls     / 5)
+  - qualificationFouls          * 1
 )
 ```
 
-applied to the best `N` qualification games (not to the career totals). `ceil` is applied to the
-**cumulative** box-score counters of that subset, not per game. One personal point then two more is
-`ceil(3/10) = 1`, not `1 + 1`. A game closed by hand with no report still awards 6 for a win and
-nothing from the box score. `Tournament.winPoints` is unused.
+applied to the best `N` qualification games (not to the career totals). Personal points and assists
+are scored linearly so teammates with the same result are separated by what they did. A game closed
+by hand with no report still awards 6 for a win and nothing from the box score.
+`Tournament.winPoints` is unused.
 
 These points are what the finals generator reads; only qualification matches feed the formula.
 Final-phase reports still update display stats (`matchesPlayed`, `wins`, box score) so the whole
@@ -706,20 +705,19 @@ A game has an explicit lifecycle.
 Generated qualification games start in `queued` and never carry a scheduled time:
 
 ```text
-queued → ready → in_progress → completed
+queued → ready → completed
 ```
 
 - `queued` — in the plan, not yet bound to a court;
-- `ready` — reserved on a specific court, waiting for an explicit Start;
-- `in_progress` — being played;
+- `ready` — reserved on a specific court, waiting for a report or paper complete;
+- `in_progress` — legacy: matches that were started before the start step was removed; still treated as occupying the court;
 - `completed` — final score recorded.
 
 `scheduled` exists for manually created games that do have a planned time. It is not used by the
 generator.
 
-`ready → completed` is also reachable, but **only** through a submitted match report (§22): a report
-proves the game was played, so a scorekeeper who forgot to press Start must not be able to strand it.
-The report sets `startedAt` itself in that case.
+`ready → completed` is the normal close: a submitted match report (§22) or a staff paper complete.
+The report sets `startedAt` itself when it was never set.
 
 A completed game generates the data required to update the tournament ranking.
 
@@ -1123,7 +1121,7 @@ without touching the schedule.
 
 ## 22.6 Not covered yet
 
-- **An abandoned game.** A game nobody ever reports stays `in_progress`, holding its court and its six
+- **An abandoned game.** A game nobody ever reports stays `ready`, holding its court and its six
   players. The existing escape hatch is a staff completion with a typed score; a real `abandoned`
   status would touch the status enum, the court index and the queue engine.
 - **`targetScore` as configuration.** The target that makes draws impossible is a documented rule, but

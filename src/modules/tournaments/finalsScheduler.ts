@@ -2,7 +2,7 @@ export const PLAYERS_PER_FINAL = 6;
 
 export interface RankedFinalsPlayer {
   registrationId: string;
-  jerseyNumber?: number;
+  jerseyNumber?: string;
   name?: string;
   skillRating?: number;
   rankingPoints: number;

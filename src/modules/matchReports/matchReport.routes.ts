@@ -1,11 +1,7 @@
 import { Router } from "express";
 import { requireAuth, requireRole } from "../../middleware/auth";
+import { requireRefereeUser } from "../../middleware/refereeUserAuth";
 import { asyncHandler } from "../../utils/asyncHandler";
-import {
-  correctMatchReportHandler,
-  getMatchReport,
-  submitStaffMatchReport
-} from "./matchReport.controller";
 import {
   getAssignedMatch,
   getRefereeMatches,
@@ -13,10 +9,11 @@ import {
   requestAvailability,
   withdrawAvailability
 } from "../matches/matchReferee.controller";
-import { requireRefereeUser } from "../../middleware/refereeUserAuth";
 import {
-  startAssignedRefereeMatch,
-  submitAssignedRefereeMatchReport
+  correctMatchReportHandler,
+  getMatchReport,
+  submitAssignedRefereeMatchReport,
+  submitStaffMatchReport
 } from "./matchReport.controller";
 
 // Mounted on /referee. One authorization rule per route: a staff token is never
@@ -28,7 +25,6 @@ refereeRouter.get("/tournaments/:id/matches", requireRefereeUser, asyncHandler(g
 refereeRouter.post("/matches/:id/availability", requireRefereeUser, asyncHandler(requestAvailability));
 refereeRouter.delete("/matches/:id/availability", requireRefereeUser, asyncHandler(withdrawAvailability));
 refereeRouter.get("/matches/:id", requireRefereeUser, asyncHandler(getAssignedMatch));
-refereeRouter.post("/matches/:id/start", requireRefereeUser, asyncHandler(startAssignedRefereeMatch));
 refereeRouter.post("/matches/:id/report", requireRefereeUser, asyncHandler(submitAssignedRefereeMatchReport));
 
 // Mounted on /matches alongside matchRouter.

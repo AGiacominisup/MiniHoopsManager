@@ -8,7 +8,7 @@ const players = (
 ): QualificationPlayer[] =>
   Array.from({ length: count }, (_, index) => ({
     registrationId: `registration-${index + 1}`,
-    jerseyNumber: index + 1,
+    jerseyNumber: String(index + 1),
     ...(skillRating && { skillRating: skillRating(index) })
   }));
 
