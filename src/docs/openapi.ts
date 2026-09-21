@@ -707,7 +707,10 @@ export const openApiSpec = {
     },
     "/api/tournaments/{id}/courts/{courtId}/assign-next": {
       post: {
-        tags: ["Matches"], summary: "Reserve the next compatible match on a free court", security: [{ bearerAuth: [] }],
+        tags: ["Matches"],
+        summary: "Optional helper: reserve the next compatible match on a free court",
+        description: "Staff pick. Completing or reporting a match never calls this: the court stays free until someone in the back office assigns a game.",
+        security: [{ bearerAuth: [] }],
         parameters: [
           { name: "id", in: "path", required: true, schema: { type: "string" } },
           { name: "courtId", in: "path", required: true, schema: { type: "string" } }
@@ -825,10 +828,10 @@ export const openApiSpec = {
     },
     "/api/matches/{id}/complete": {
       post: {
-        tags: ["Matches"], summary: "Complete a ready match and reserve the next one", security: [{ bearerAuth: [] }],
+        tags: ["Matches"], summary: "Complete a ready match and free the court", security: [{ bearerAuth: [] }],
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
         requestBody: { required: true, content: { "application/json": { schema: { type: "object", required: ["scoreA", "scoreB"], properties: { scoreA: { type: "integer", minimum: 0 }, scoreB: { type: "integer", minimum: 0 } } } } } },
-        responses: { "200": { description: "Completed match, next ready match and idempotency flag" }, "409": { description: "Invalid transition or changed result" } }
+        responses: { "200": { description: "Completed match and idempotency flag; the court is left free" }, "409": { description: "Invalid transition or changed result" } }
       }
     },
     "/api/tournaments/{id}/recompute-aggregates": {
@@ -890,7 +893,7 @@ export const openApiSpec = {
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
         requestBody: { required: true, content: { "application/json": { schema: { $ref: "#/components/schemas/MatchReportSubmitRequest" } } } },
         responses: {
-          "201": { description: "Report stored, match completed and the next match reserved on the court" },
+          "201": { description: "Report stored, match completed and the court left free" },
           "200": { description: "Idempotent replay, or a report accepted for an already completed match" },
           "400": { description: "Invalid payload, a draw, over-attribution, or a player outside the match" },
           "403": { description: "Referee is not assigned to this match" },

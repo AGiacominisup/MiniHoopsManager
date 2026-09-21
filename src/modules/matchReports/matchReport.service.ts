@@ -43,7 +43,6 @@ export interface SubmitMatchReportParams {
 export interface SubmitMatchReportResult {
   report: MatchReportEntity;
   match: MatchEntity;
-  nextMatch: MatchEntity | null;
   warnings: string[];
   idempotent: boolean;
   lateReport: boolean;
@@ -109,7 +108,6 @@ export const submitMatchReport = async (
         result = {
           report: replayed,
           match,
-          nextMatch: null,
           warnings: warningsOf(replayed),
           idempotent: true,
           lateReport: false
@@ -158,19 +156,17 @@ export const submitMatchReport = async (
         { session }
       );
 
-      let nextMatch: MatchEntity | null = null;
       if (lateReport) {
         match.set({ scoreA: body.scoreA, scoreB: body.scoreB });
         await match.save({ session });
       } else {
-        const completion = await completeMatchWithSession(
+        await completeMatchWithSession(
           matchId,
           body.scoreA,
           body.scoreB,
           session,
           { skipRegistrationAggregates: true }
         );
-        nextMatch = completion.nextMatch;
       }
 
       await recomputeRegistrationAggregates(
@@ -182,7 +178,6 @@ export const submitMatchReport = async (
       result = {
         report,
         match,
-        nextMatch,
         warnings: content.warnings,
         idempotent: false,
         lateReport
@@ -204,7 +199,6 @@ export const submitMatchReport = async (
           return {
             report: existing,
             match,
-            nextMatch: null,
             warnings: warningsOf(existing),
             idempotent: true,
             lateReport: false

@@ -143,37 +143,36 @@ The engine does **not** solve this with a fixed round structure. Real minibasket
 on schedule, so any pre-computed timetable drifts within the first hour of play.
 
 Instead, generation produces an **ordered queue** of games. Every generated game is persisted with
-`courtId: null` and a `queuePosition`, and is bound to a court only at run time, when that court
-becomes free:
+`courtId: null` and a `queuePosition`, and is bound to a court only at run time by staff in the
+back office:
+
+```text
+POST /matches/{matchId}/assign   { courtId }
+```
+
+The back office lists queued games with `availability.playable` so operators can see which ones have
+all six players free, then assign a chosen game to a free court. Completing or reporting a game
+frees the court; it does **not** occupy the next one.
+
+The game must still be `queued`, the court must belong to the tournament and be free, and the six
+players must all be idle. Player overlap is therefore prevented at assignment time rather than at
+generation time, and it holds by construction no matter how long games actually run. The overlap
+check runs inside the transaction, so a stale client cannot double-book a player; the request is
+refused with `409` instead. Re-sending the same court for a game already `ready` there is a no-op,
+so a double click does not fail.
+
+## 5.1 Optional engine pick
+
+If staff want the engine's pick instead of choosing, a helper remains available:
 
 ```text
 POST /tournaments/{id}/courts/{courtId}/assign-next
 ```
 
 Assignment walks the queue in order and reserves the first game whose six players are not already
-busy in a `ready` or `in_progress` game. Player overlap is therefore prevented at assignment time
-rather than at generation time, and it holds by construction no matter how long games actually run.
-
-Among the eligible candidates the engine prefers those with the fewest players from the game that
-just finished, so players get a break before playing again.
-
-Completing a game automatically reserves the next compatible game on the freed court.
-
-## 5.1 Choosing the game by hand
-
-The operator does not always want the engine's pick — a coach asks for a game to be brought forward,
-or a team is already warmed up. The same reservation is therefore also available for an explicitly
-chosen game:
-
-```text
-POST /matches/{matchId}/assign   { courtId }
-```
-
-It is the same operation with the selection step removed, not a weaker one: the game must still be
-`queued`, the court must belong to the tournament and be free, and the six players must all be idle.
-The overlap check runs inside the transaction, so a stale client cannot double-book a player; the
-request is refused with `409` instead. Re-sending the same court for a game already `ready` there is
-a no-op, so a double click does not fail.
+busy in a `ready` or `in_progress` game. Among the eligible candidates the engine prefers those with
+the fewest players from the game that just finished, so players get a break before playing again.
+This endpoint is never called by report or complete.
 
 ## 5.2 Reporting playability
 
@@ -1043,11 +1042,12 @@ The referee can offer availability only after a game has been assigned to a cour
 game in the backoffice, sees pending referees and selects exactly one. The assignment is persisted on
 the game and is valid only for that game; the next game on the same court requires a new selection.
 
-Only the selected referee can read, start and report the game. A referee who is not selected receives
+Only the selected referee can read and report the game. A referee who is not selected receives
 `403`, even if they know the game's ID. The scorer app never assigns games to courts.
 
 The old shared court-code flow is not part of the MVP scorer API. Court assignment and referee
-assignment remain separate concerns: the queue chooses the court, while staff chooses the person.
+assignment remain separate concerns: staff in the back office choose the court, and staff choose
+the person.
 
 ## 22.2 Offline first: one submission, at the end
 
@@ -1063,9 +1063,9 @@ Consequences the client must honour:
 - `clientSequence` is the authoritative ordering of events. `clientRecordedAt` is stored but read by
   nothing, so a tablet with a wrong clock can still submit.
 
-Submitting the report **completes the game**: one call, one transaction, one retry story. It reserves
-the next game on the freed court and returns it as `nextMatch`, exactly like the ordinary completion
-path. `POST /matches/{id}/complete` remains for the paper fallback.
+Submitting the report **completes the game**: one call, one transaction, one retry story. The court
+is left free; staff assign the next playable game from the back office. `POST /matches/{id}/complete`
+remains for the paper fallback.
 
 ## 22.3 The team score is authoritative, the attribution is best effort
 

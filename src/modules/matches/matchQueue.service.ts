@@ -193,14 +193,10 @@ export interface CompleteMatchOptions {
   // recomputeRegistrationAggregates. Two writers to the same counters is how
   // these totals would drift.
   skipRegistrationAggregates?: boolean;
-  // A late report for an already completed match must not reserve anything: the
-  // court moved on hours ago.
-  skipAssignNext?: boolean;
 }
 
 export interface CompleteMatchResult {
   match: mongoose.HydratedDocument<MatchDocument>;
-  nextMatch: mongoose.HydratedDocument<MatchDocument> | null;
   idempotent: boolean;
 }
 
@@ -219,7 +215,7 @@ export const completeMatchWithSession = async (
     if (match.scoreA !== scoreA || match.scoreB !== scoreB) {
       throw new ApiError(409, "Completed match result cannot be changed");
     }
-    return { match, nextMatch: null, idempotent: true };
+    return { match, idempotent: true };
   }
 
   const completable = match.status === "ready" || match.status === "in_progress";
@@ -246,9 +242,8 @@ export const completeMatchWithSession = async (
     );
   }
 
-  const nextMatch = options.skipAssignNext
-    ? null
-    : await assignNextWithSession(String(match.tournamentId), String(match.courtId), session);
+  // The court is left free. Staff pick the next game from the back office
+  // (POST /matches/:id/assign), using availability.playable on the queued list.
 
   if (match.phase === "final") {
     const remaining = await MatchModel.exists({
@@ -265,7 +260,7 @@ export const completeMatchWithSession = async (
     }
   }
 
-  return { match, nextMatch, idempotent: false };
+  return { match, idempotent: false };
 };
 
 export const completeMatch = async (matchId: string, scoreA: number, scoreB: number) => {

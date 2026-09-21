@@ -53,7 +53,6 @@ export const submitRefereeMatchReport = async (req: Request, res: Response): Pro
       : "Match report submitted",
     report: result.report,
     match: result.match,
-    nextMatch: result.nextMatch,
     warnings: result.warnings,
     idempotent: result.idempotent
   });
@@ -76,7 +75,6 @@ export const submitStaffMatchReport = async (req: Request, res: Response): Promi
       : "Match report submitted",
     report: result.report,
     match: result.match,
-    nextMatch: result.nextMatch,
     warnings: result.warnings,
     idempotent: result.idempotent
   });
@@ -104,7 +102,6 @@ export const submitAssignedRefereeMatchReport = async (
       : "Match report submitted",
     report: result.report,
     match: result.match,
-    nextMatch: result.nextMatch,
     warnings: result.warnings,
     idempotent: result.idempotent
   });

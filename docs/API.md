@@ -170,8 +170,8 @@ snapshots, not persistent entities. A tournament is prepared and started with th
 3. Optionally read `GET /tournaments/:id/setup` for the current counts and blockers.
 4. Start the tournament with `POST /tournaments/:id/start`. This is the single "start" action: it
   freezes the roster, generates the match queue and moves the tournament to `qualification`.
-5. Reserve a queued match on a court, then complete it with a report (or the paper fallback).
-  Completion reserves the next compatible match on the same court.
+5. Reserve a queued match on a court by hand, then complete it with a report (or the paper fallback).
+  Completing a match frees the court; staff assign the next game the same way.
 6. When every qualification match has a report, `GET /tournaments/:id/setup` reports
   `finalsReadiness.ready: true`. Staff then calls `POST /tournaments/:id/finals/generate`.
 7. Final matches are queued the same way as qualification. Completing the last final moves the
@@ -585,7 +585,7 @@ both returned, including on the referee scorer endpoints.
 | `DELETE` | `/matches/:id` | `{ message }` |
 | `POST` | `/matches/:id/assign` | `{ message, match }` |
 | `POST` | `/tournaments/:id/courts/:courtId/assign-next` | `{ match: Match | null }` |
-| `POST` | `/matches/:id/complete` | `{ message, match, nextMatch, idempotent }` |
+| `POST` | `/matches/:id/complete` | `{ message, match, idempotent }` |
 
 ### Assigning a match to a court
 
@@ -609,38 +609,36 @@ stale list is refused rather than double-booking a player:
 | `409` | `Match players are already busy in another match: <registrationIds>` |
 | `409` | `Match was assigned by another request` — concurrent assignment won the race |
 
-To let the backend pick instead of choosing a match, use
-`POST /tournaments/:id/courts/:courtId/assign-next`, which walks the queue in order and reserves the
-first playable match, preferring the ones with the fewest players from the match that just ended. It
-returns `{ match: null }` when nothing is currently playable. Completing a match runs the same
-selection automatically on the freed court and returns the reservation as `nextMatch`.
+To let the backend pick instead of choosing a match, staff can still call
+`POST /tournaments/:id/courts/:courtId/assign-next`. Completing or reporting a match does **not**
+run that selection: the court stays free until someone in the back office assigns the next game.
 
 ### Frontend court workflow
 
 The frontend should treat court assignment as putting the game on the floor. There is no separate
-start call: the next action is the report (or paper complete). The state machine for generated
+start call, and completing a game does not occupy the next one. The state machine for generated
 qualification matches is:
 
 ```text
 queued --assign--> ready --complete/report--> completed
-                         ^                                      |
-                         |                                      +--> nextMatch: ready | null
-                         +---------- next court reservation ----+
 ```
+
+The court is then free. Staff look at `availability.playable` on the remaining queued matches and
+assign one by hand.
 
 The normal staff/operator flow is:
 
 1. Load `GET /matches?tournamentId=:id&phase=qualification&status=queued` and display the matches in
    `queuePosition` order. Use `availability.playable` to enable the assignment action and show
    `busyRegistrationIds` when it is false.
-2. When a court is free, either call `POST /matches/:matchId/assign` with the selected `courtId`, or
-   call `POST /tournaments/:id/courts/:courtId/assign-next` and let the backend choose.
+2. When a court is free, call `POST /matches/:matchId/assign` with the selected `courtId` for a
+   playable match. `POST /tournaments/:id/courts/:courtId/assign-next` remains available if staff
+   want the engine's pick instead of choosing.
 3. Refresh the match list. The assigned match is now `ready`, has the selected `courtId`, and its six
    players are considered busy. The court is ready to play.
-4. When play ends, prefer submitting a match report. A report completes the match and automatically
-   reserves the next compatible match on the same court. For the paper/manual fallback, call
-   `POST /matches/:matchId/complete` with `scoreA` and `scoreB`; this also works from `ready` and
-   returns the next reservation.
+4. When play ends, submit a match report (or `POST /matches/:matchId/complete` for the paper
+   fallback). The match becomes `completed` and the court is free. Refresh the queued list: matches
+   whose six players are now idle will show `availability.playable === true`. Repeat from step 2.
 
 The assignment response has this shape:
 
@@ -744,7 +742,7 @@ can operate a match only after staff selects that referee for it.
   | `POST` | `/referee/matches/:id/availability` | `referee` | `{ availability }` |
   | `DELETE` | `/referee/matches/:id/availability` | `referee` | `{ availability }` |
   | `GET` | `/referee/matches/:id` | `referee` | `{ match }`, only when selected |
-| `POST` | `/referee/matches/:id/report` | selected `referee` | report result and `nextMatch` |
+| `POST` | `/referee/matches/:id/report` | selected `referee` | report result |
 
 Availability can be requested only for an incomplete match already assigned to a court. Staff sees
 pending and selected requests with `GET /matches/:id/referee-availability` (each populated with the
@@ -844,7 +842,7 @@ export interface MatchReport {
 
 | Method | Path | Auth | Response |
 | --- | --- | --- | --- |
-| `POST` | `/referee/matches/:id/report` | selected referee | `{ message, report, match, nextMatch, warnings, idempotent }` |
+| `POST` | `/referee/matches/:id/report` | selected referee | `{ message, report, match, warnings, idempotent }` |
 | `GET` | `/matches/:id/report` | authenticated | `{ report }` |
 | `POST` | `/matches/:id/report` | `admin`, `staff` | same as the referee submit |
 | `PUT` | `/matches/:id/report` | `admin`, `staff` | `{ message, report, match, warnings }` |
@@ -853,10 +851,11 @@ export interface MatchReport {
 
 ### Submitting completes the match
 
-One call, one transaction. It sets the match to `completed`, records the score, reserves the next
-compatible match on the freed court and returns it as `nextMatch`, and closes the tournament when
-nothing is left to play — exactly like `POST /matches/:id/complete`, which remains available for the
-paper fallback.
+One call, one transaction. It sets the match to `completed`, records the score, and frees the court.
+It does **not** assign another match: staff pick the next playable game from the back office
+(`availability.playable`) and call `POST /matches/:id/assign`. Completing the last **final** closes
+the tournament. `POST /matches/:id/complete` remains available for the paper fallback and has the
+same completion semantics.
 
 A `ready` match is reported directly: assignment is what puts the game on the court, and the report
 is what closes it.
