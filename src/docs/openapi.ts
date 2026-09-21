@@ -214,7 +214,7 @@ export const openApiSpec = {
             type: "integer",
             minimum: 0,
             description:
-              "Derived standing from the best N qualification games only, where N is qualificationAppearancesPerPlayer: 6 per win, 2 per personal point, 2 per assist, 4 per MVP, 2 per fair play, minus 1 per foul, applied to the subset of N games that maximises the score. Extra appearances and final-phase reports do not automatically change this value. Clamped at 0. Tournament.winPoints is ignored."
+              "Derived standing from the best N qualification games only, where N is qualificationAppearancesPerPlayer: 6 per win, 2 per personal point, 2 per assist, 4 per MVP, 1 per fair play, minus 1 per foul, applied to the subset of N games that maximises the score. Extra appearances and final-phase reports do not automatically change this value. Clamped at 0. Tournament.winPoints is ignored."
           },
           matchesPlayed: { type: "integer", minimum: 0 },
           wins: { type: "integer", minimum: 0 },

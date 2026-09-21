@@ -484,16 +484,18 @@ rankingPoints = max(0,
   + qualificationPointsMade     * 2
   + qualificationAssists        * 2
   + qualificationMvpAwards      * 4
-  + qualificationFairPlayAwards * 2
+  + qualificationFairPlayAwards * 1
   - qualificationFouls          * 1
 )
 ```
 
 A final-phase report still updates the display counters so the whole tournament can be shown on
 stats screens; it never moves `rankingPoints` or `qualificationRank`. Personal points and assists
-are scored linearly so two teammates with the same result are ranked by what they did. A paper
-completion with no report still awards `6` for a qualification win and nothing from the box score.
-`Tournament.winPoints` is ignored by this formula.
+are scored linearly so two teammates with the same result are ranked by what they did. Fair play is
+a token (`1`) so a behavioural award cannot seat a player into the wrong final group; the
+organisation prizes those players from `fairPlayAwards`. A paper completion with no report still
+awards `6` for a qualification win and nothing from the box score. `Tournament.winPoints` is
+ignored by this formula.
 
 `pointsScored` is the **team** score copied onto all three teammates — individual scoring is
 `pointsMade`. The names are kept for compatibility.

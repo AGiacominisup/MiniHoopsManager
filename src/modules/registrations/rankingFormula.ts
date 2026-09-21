@@ -1,6 +1,6 @@
 export const RANKING_WIN_POINTS = 6;
 export const RANKING_MVP_POINTS = 4;
-export const RANKING_FAIR_PLAY_POINTS = 2;
+export const RANKING_FAIR_PLAY_POINTS = 1;
 export const RANKING_POINTS_MADE_POINTS = 2;
 export const RANKING_ASSIST_POINTS = 2;
 export const RANKING_FOUL_PENALTY = 1;
@@ -26,7 +26,8 @@ const EMPTY_RANKING_INPUTS: RankingInputs = {
 /**
  * Individual standing from a set of qualification games. Personal points and
  * assists are scored linearly so teammates with the same result are separated
- * by what they did, not by coarse ceil() buckets.
+ * by what they did, not by coarse ceil() buckets. Fair play is a token so a
+ * behavioural award cannot seat a player into the wrong final group.
  */
 export const computeRankingPoints = (input: RankingInputs): number => {
   const total =

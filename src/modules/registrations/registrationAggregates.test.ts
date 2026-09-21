@@ -127,7 +127,7 @@ test("adds the individual numbers from the report and leaves the team numbers to
   const fairPlayer = computeAggregates("b2", [match], reportsFor(report));
   assert.equal(fairPlayer.fairPlayAwards, 1);
   assert.equal(fairPlayer.pointsMade, 0);
-  assert.equal(fairPlayer.rankingPoints, 2);
+  assert.equal(fairPlayer.rankingPoints, 1);
 });
 
 test("a completed match without a report still counts for the standings", () => {

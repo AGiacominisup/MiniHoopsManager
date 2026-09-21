@@ -563,15 +563,16 @@ rankingPoints = max(0,
   + qualificationPointsMade     * 2
   + qualificationAssists        * 2
   + qualificationMvpAwards      * 4
-  + qualificationFairPlayAwards * 2
+  + qualificationFairPlayAwards * 1
   - qualificationFouls          * 1
 )
 ```
 
 applied to the best `N` qualification games (not to the career totals). Personal points and assists
-are scored linearly so teammates with the same result are separated by what they did. A game closed
-by hand with no report still awards 6 for a win and nothing from the box score.
-`Tournament.winPoints` is unused.
+are scored linearly so teammates with the same result are separated by what they did. Fair play is
+a token so a behavioural award cannot move a player into the wrong final group; the organisation
+prizes those players from `fairPlayAwards`. A game closed by hand with no report still awards 6 for
+a win and nothing from the box score. `Tournament.winPoints` is unused.
 
 These points are what the finals generator reads; only qualification matches feed the formula.
 Final-phase reports still update display stats (`matchesPlayed`, `wins`, box score) so the whole
@@ -1021,7 +1022,8 @@ What is recorded:
 - an **optional assist**, attributed to a teammate of the scorer;
 - every foul, attributed to a player;
 - optionally, at the end, two subjective awards: **MVP** and **fair play** — the second one is
-  deliberately not about performance, but about behaviour.
+  deliberately not about performance, but about behaviour, and it only adds a token `1` to
+  `rankingPoints` so it cannot seat the player into the wrong final group.
 
 ## 22.1 Authenticated referee assignment
 

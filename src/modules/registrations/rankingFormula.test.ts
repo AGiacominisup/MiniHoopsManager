@@ -7,7 +7,7 @@ import {
   type RankingInputs
 } from "./rankingFormula";
 
-test("awards 6 for a win, 4 for MVP and 2 for fair play", () => {
+test("awards 6 for a win, 4 for MVP and 1 for fair play", () => {
   assert.equal(
     computeRankingPoints({
       wins: 1,
@@ -17,7 +17,21 @@ test("awards 6 for a win, 4 for MVP and 2 for fair play", () => {
       assists: 0,
       fouls: 0
     }),
-    12
+    11
+  );
+});
+
+test("fair play is a token and does not match a basket", () => {
+  assert.equal(
+    computeRankingPoints({
+      wins: 0,
+      mvpAwards: 0,
+      fairPlayAwards: 1,
+      pointsMade: 0,
+      assists: 0,
+      fouls: 0
+    }),
+    1
   );
 });
 
