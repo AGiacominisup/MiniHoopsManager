@@ -2,6 +2,7 @@ import type { Request, Response } from "express";
 import { ApiError } from "../../utils/ApiError";
 import { idParamsSchema } from "../../utils/validation";
 import { assertAssignedReferee } from "../matches/matchReferee.service";
+import { presentMatch, presentMatchOrNull } from "../matches/matchTargetScore";
 import {
   correctMatchReport,
   loadMatchReport,
@@ -32,7 +33,10 @@ const requireUserId = (req: Request): string => {
 export const getRefereeContext = async (req: Request, res: Response): Promise<void> => {
   const context = await loadRefereeContext(refereeScope(req));
 
-  res.status(200).json(context);
+  res.status(200).json({
+    ...context,
+    match: await presentMatchOrNull(context.match)
+  });
 };
 
 export const submitRefereeMatchReport = async (req: Request, res: Response): Promise<void> => {
@@ -52,7 +56,7 @@ export const submitRefereeMatchReport = async (req: Request, res: Response): Pro
       ? "Match report recorded for an already completed match"
       : "Match report submitted",
     report: result.report,
-    match: result.match,
+    match: await presentMatch(result.match),
     warnings: result.warnings,
     idempotent: result.idempotent
   });
@@ -74,7 +78,7 @@ export const submitStaffMatchReport = async (req: Request, res: Response): Promi
       ? "Match report recorded for an already completed match"
       : "Match report submitted",
     report: result.report,
-    match: result.match,
+    match: await presentMatch(result.match),
     warnings: result.warnings,
     idempotent: result.idempotent
   });
@@ -101,7 +105,7 @@ export const submitAssignedRefereeMatchReport = async (
       ? "Match report recorded for an already completed match"
       : "Match report submitted",
     report: result.report,
-    match: result.match,
+    match: await presentMatch(result.match),
     warnings: result.warnings,
     idempotent: result.idempotent
   });
@@ -124,7 +128,7 @@ export const correctMatchReportHandler = async (req: Request, res: Response): Pr
   res.status(200).json({
     message: "Match report corrected",
     report: result.report,
-    match: result.match,
+    match: await presentMatch(result.match),
     warnings: result.warnings
   });
 };

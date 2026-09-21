@@ -10,6 +10,7 @@ import { recomputeRegistrationAggregates } from "../registrations/registrationAg
 import { PlayerModel } from "../players/player.model";
 import { resolveJerseyNumber } from "../players/playerIdentity";
 import { assignNextMatch } from "../matches/matchQueue.service";
+import { presentMatch, presentMatchOrNull, presentMatches } from "../matches/matchTargetScore";
 import { loadTournament, loadUnlockedTournament } from "./tournament.guards";
 import { TournamentModel } from "./tournament.model";
 import {
@@ -39,6 +40,8 @@ export const createTournament = async (req: Request, res: Response): Promise<voi
     ...(body.endDate && { endDate: new Date(body.endDate) }),
     category: body.category,
     winPoints: body.winPoints,
+    qualificationTargetScore: body.qualificationTargetScore,
+    finalsTargetScore: body.finalsTargetScore ?? body.qualificationTargetScore,
     courts: body.courts ?? [],
     finalGroups: body.finalGroups ?? [],
     ...(body.configuration && { configuration: body.configuration })
@@ -64,8 +67,8 @@ export const updateTournament = async (req: Request, res: Response): Promise<voi
   const body = updateTournamentSchema.parse(req.body);
   const tournament = await loadTournament(id);
 
-  // Configuration, courts and winPoints stay locked after start. winPoints is
-  // unused by the ranking formula but remains on the payload for compatibility.
+  // Configuration, courts, winPoints and the qualification target stay locked
+  // after start. The finals target can still change until a final is on a court.
   if (
     tournament.status !== "draft" &&
     (body.configuration || body.courts || body.winPoints !== undefined)
@@ -74,6 +77,22 @@ export const updateTournament = async (req: Request, res: Response): Promise<voi
       409,
       "Tournament configuration, courts and win points are locked once it has started"
     );
+  }
+  if (tournament.status !== "draft" && body.qualificationTargetScore !== undefined) {
+    throw new ApiError(409, "Qualification target score is locked once the tournament has started");
+  }
+  if (body.finalsTargetScore !== undefined) {
+    if (tournament.status === "completed") {
+      throw new ApiError(409, "Finals target score is locked once the tournament is completed");
+    }
+    const startedFinal = await MatchModel.exists({
+      tournamentId: tournament._id,
+      phase: "final",
+      status: { $in: ["ready", "in_progress", "completed"] }
+    });
+    if (startedFinal) {
+      throw new ApiError(409, "Finals target score is locked once a final match has started");
+    }
   }
   if (
     (tournament.status === "finals" || tournament.status === "completed") &&
@@ -266,7 +285,11 @@ export const startTournamentQualification = async (req: Request, res: Response):
   const { id } = idParamsSchema.parse(req.params);
   const { seed } = tournamentStartSchema.parse(req.body ?? {});
   const result = await startTournament(id, seed);
-  res.status(result.idempotent ? 200 : 201).json({ message: "Tournament started", ...result });
+  res.status(result.idempotent ? 200 : 201).json({
+    message: "Tournament started",
+    ...result,
+    matches: await presentMatches(result.matches)
+  });
 };
 
 export const previewTournamentQualification = async (req: Request, res: Response): Promise<void> => {
@@ -279,7 +302,10 @@ export const generateTournamentQualification = async (req: Request, res: Respons
   const { id } = idParamsSchema.parse(req.params);
   const body = qualificationGenerateSchema.parse(req.body);
   const result = await generateQualification(id, body.seed, body.rosterFingerprint);
-  res.status(result.idempotent ? 200 : 201).json(result);
+  res.status(result.idempotent ? 200 : 201).json({
+    ...result,
+    matches: await presentMatches(result.matches)
+  });
 };
 
 export const cancelTournamentQualification = async (req: Request, res: Response): Promise<void> => {
@@ -291,13 +317,17 @@ export const cancelTournamentQualification = async (req: Request, res: Response)
 export const generateTournamentFinals = async (req: Request, res: Response): Promise<void> => {
   const { id } = idParamsSchema.parse(req.params);
   const result = await generateFinals(id);
-  res.status(result.idempotent ? 200 : 201).json({ message: "Finals generated", ...result });
+  res.status(result.idempotent ? 200 : 201).json({
+    message: "Finals generated",
+    ...result,
+    matches: await presentMatches(result.matches)
+  });
 };
 
 export const assignNextTournamentMatch = async (req: Request, res: Response): Promise<void> => {
   const { id, courtId } = tournamentCourtParamsSchema.parse(req.params);
   const match = await assignNextMatch(id, courtId);
-  res.status(200).json({ match });
+  res.status(200).json({ match: await presentMatchOrNull(match) });
 };
 
 // Escape hatch: the registration counters are engine-managed, but they were

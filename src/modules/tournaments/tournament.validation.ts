@@ -1,5 +1,8 @@
 import { z } from "zod";
 import { objectIdSchema } from "../../utils/validation";
+import { TARGET_SCORE_MAX, TARGET_SCORE_MIN } from "../matches/matchTargetScore";
+
+const targetScoreSchema = z.number().int().min(TARGET_SCORE_MIN).max(TARGET_SCORE_MAX);
 
 const tournamentFields = {
   name: z.string().trim().min(3),
@@ -7,6 +10,8 @@ const tournamentFields = {
   endDate: z.string().datetime().optional(),
   category: z.string().trim().min(2).optional(),
   winPoints: z.number().int().min(1).optional(),
+  qualificationTargetScore: targetScoreSchema.optional(),
+  finalsTargetScore: targetScoreSchema.optional(),
   courts: z
     .array(
       z.object({
@@ -59,7 +64,10 @@ export const bulkAttendanceSchema = z.object({
 });
 
 export const createTournamentSchema = z
-  .object(tournamentFields)
+  .object({
+    ...tournamentFields,
+    qualificationTargetScore: targetScoreSchema
+  })
   .refine(
     (data) =>
       !data.startDate || !data.endDate || new Date(data.endDate) >= new Date(data.startDate),

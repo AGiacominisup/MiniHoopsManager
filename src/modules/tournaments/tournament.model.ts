@@ -53,6 +53,8 @@ export interface TournamentDocument {
   endDate?: Date;
   category?: string;
   winPoints: number;
+  qualificationTargetScore: number;
+  finalsTargetScore: number;
   status: TournamentStatus;
   courts: Court[];
   finalGroups: FinalGroup[];
@@ -130,6 +132,10 @@ const tournamentSchema = new Schema<TournamentDocument>(
     endDate: { type: Date },
     category: { type: String, trim: true },
     winPoints: { type: Number, default: 10, min: 1 },
+    // First side to this score wins. Qualification locks after start; finals
+    // stay editable until a final match is assigned or completed.
+    qualificationTargetScore: { type: Number, default: 13, min: 1, max: 99 },
+    finalsTargetScore: { type: Number, default: 13, min: 1, max: 99 },
     status: {
       type: String,
       enum: ["draft", "qualification", "finals", "completed"],

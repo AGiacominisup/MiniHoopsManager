@@ -112,6 +112,11 @@ distributed into:
 
 A game is therefore the fundamental unit used by the tournament engine.
 
+Each game is played to a target score: first side to reach it wins. The tournament stores two
+values, `qualificationTargetScore` (set at creation, locked after start) and `finalsTargetScore`
+(defaults to the qualification value, editable until a final match is on a court). A 2-point
+basket may finish above the target.
+
 A game contains:
 
 ```text
@@ -1086,10 +1091,16 @@ scoreboard the children and parents just watched stays the official result.
 
 ## 22.4 No draws
 
-A game is played to a target score and the first side to reach it wins, so a level score is
-structurally impossible and is treated as an input error. Both the report and the correction refuse it
-with the same message the completion endpoint already uses:
-`Draws are not supported in the current tournament format`.
+A game is played to a target score set on the tournament — `qualificationTargetScore` for
+qualification games and `finalsTargetScore` for finals — and the first side to reach it wins, so a
+level score is structurally impossible and is treated as an input error. Both the report and the
+correction refuse a draw with the same message the completion endpoint already uses:
+`Draws are not supported in the current tournament format`. A winner below the target is refused
+with `Winning score must reach the target of <n>`. A 2-point basket may finish above the target.
+
+`qualificationTargetScore` is required when the tournament is created and locks once qualification
+starts. `finalsTargetScore` defaults to the qualification value and can be changed until a final
+match is assigned or completed, so staff can shorten or lengthen finals at the last moment.
 
 Supporting draws later would need `Registration.draws` and a `drawPoints` setting; the recompute
 service is the only place that would have to learn the new rule.

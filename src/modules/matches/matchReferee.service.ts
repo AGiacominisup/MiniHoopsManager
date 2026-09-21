@@ -2,6 +2,7 @@ import mongoose from "mongoose";
 import { ApiError } from "../../utils/ApiError";
 import { TournamentModel } from "../tournaments/tournament.model";
 import { MatchModel } from "./match.model";
+import { presentMatch, presentMatches } from "./matchTargetScore";
 import {
   MatchRefereeAvailabilityModel,
   type MatchRefereeAvailabilityDocument
@@ -21,7 +22,7 @@ const assertCandidateMatch = (match: { courtId: unknown; status: string }): void
 
 export const listRefereeTournaments = async () =>
   TournamentModel.find({ status: { $ne: "completed" } })
-    .select({ name: 1, status: 1, courts: 1 })
+    .select({ name: 1, status: 1, courts: 1, qualificationTargetScore: 1, finalsTargetScore: 1 })
     .sort({ createdAt: -1 });
 
 export const listRefereeMatches = async (tournamentId: string, refereeUserId: string) => {
@@ -37,8 +38,9 @@ export const listRefereeMatches = async (tournamentId: string, refereeUserId: st
   const availabilityByMatch = new Map(
     availabilities.map((availability) => [String(availability.matchId), availability])
   );
-  return matches.map((match) => ({
-    ...match.toJSON(),
+  const presented = await presentMatches(matches);
+  return presented.map((match) => ({
+    ...match,
     refereeAvailability: availabilityByMatch.get(String(match._id)) ?? null
   }));
 };

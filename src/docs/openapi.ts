@@ -71,13 +71,27 @@ export const openApiSpec = {
       },
       CreateTournamentRequest: {
         type: "object",
-        required: ["name"],
+        required: ["name", "qualificationTargetScore"],
         properties: {
           name: { type: "string", example: "Spring Tournament" },
           startDate: { type: "string", format: "date-time", nullable: true, example: "2026-09-10T09:00:00.000Z" },
           endDate: { type: "string", format: "date-time", nullable: true, example: "2026-09-12T18:00:00.000Z" },
           category: { type: "string", example: "U12" },
           winPoints: { type: "integer", example: 10 },
+          qualificationTargetScore: {
+            type: "integer",
+            minimum: 1,
+            maximum: 99,
+            example: 13,
+            description: "First side to this score wins a qualification game. Locked once the tournament starts."
+          },
+          finalsTargetScore: {
+            type: "integer",
+            minimum: 1,
+            maximum: 99,
+            example: 13,
+            description: "First side to this score wins a final. Defaults to qualificationTargetScore. Editable until a final match is assigned or completed."
+          },
           courts: {
             type: "array",
             items: {
@@ -112,6 +126,18 @@ export const openApiSpec = {
           winPoints: {
             type: "integer",
             description: "Unused by standings; rankingPoints uses a fixed formula on the best N qualification games."
+          },
+          qualificationTargetScore: {
+            type: "integer",
+            minimum: 1,
+            maximum: 99,
+            description: "First side to this score wins a qualification game. Required at creation, locked once the tournament starts."
+          },
+          finalsTargetScore: {
+            type: "integer",
+            minimum: 1,
+            maximum: 99,
+            description: "First side to this score wins a final. Defaults to qualificationTargetScore. Editable until a final match is assigned or completed."
           },
           status: {
             type: "string",
@@ -250,6 +276,12 @@ export const openApiSpec = {
           queuePosition: { type: "integer", minimum: 0 },
           scoreA: { type: "integer", minimum: 0 },
           scoreB: { type: "integer", minimum: 0 },
+          targetScore: {
+            type: "integer",
+            minimum: 1,
+            description:
+              "Derived from the tournament at read time: qualificationTargetScore for qualification matches, finalsTargetScore for finals. The scorer treats this as the finish line; a 2-point basket may overshoot it."
+          },
           teams: {
             type: "array",
             minItems: 2,
@@ -611,9 +643,18 @@ export const openApiSpec = {
         responses: { "200": { description: "Tournament" }, "404": { description: "Not found" } }
       },
       patch: {
-        tags: ["Tournaments"], summary: "Update a tournament", security: [{ bearerAuth: [] }],
+        tags: ["Tournaments"],
+        summary: "Update a tournament",
+        description:
+          "Partial update. configuration, courts, winPoints and qualificationTargetScore lock after start. finalsTargetScore can still change until a final match is assigned or completed.",
+        security: [{ bearerAuth: [] }],
         requestBody: { required: true, content: { "application/json": { schema: { $ref: "#/components/schemas/CreateTournamentRequest" } } } },
-        responses: { "200": { description: "Tournament updated" }, "403": { description: "Forbidden" }, "404": { description: "Not found" } }
+        responses: {
+          "200": { description: "Tournament updated" },
+          "403": { description: "Forbidden" },
+          "404": { description: "Not found" },
+          "409": { description: "A locked field was sent after start, or final groups are locked" }
+        }
       },
       delete: {
         tags: ["Tournaments"], summary: "Delete a tournament and its related data", security: [{ bearerAuth: [] }],
@@ -831,7 +872,7 @@ export const openApiSpec = {
         tags: ["Matches"], summary: "Complete a ready match and free the court", security: [{ bearerAuth: [] }],
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
         requestBody: { required: true, content: { "application/json": { schema: { type: "object", required: ["scoreA", "scoreB"], properties: { scoreA: { type: "integer", minimum: 0 }, scoreB: { type: "integer", minimum: 0 } } } } } },
-        responses: { "200": { description: "Completed match and idempotency flag; the court is left free" }, "409": { description: "Invalid transition or changed result" } }
+        responses: { "200": { description: "Completed match and idempotency flag; the court is left free" }, "400": { description: "Draw, or winner below the target score" }, "409": { description: "Invalid transition or changed result" } }
       }
     },
     "/api/tournaments/{id}/recompute-aggregates": {
@@ -847,14 +888,14 @@ export const openApiSpec = {
     "/api/referee/tournaments": {
       get: {
         tags: ["Referee"], summary: "List tournaments and courts for the scorer app", security: [{ bearerAuth: [] }],
-        responses: { "200": { description: "Tournaments with courts" }, "403": { description: "Referee role required" } }
+        responses: { "200": { description: "Tournaments with courts, qualificationTargetScore and finalsTargetScore" }, "403": { description: "Referee role required" } }
       }
     },
     "/api/referee/tournaments/{id}/matches": {
       get: {
         tags: ["Referee"], summary: "List incomplete matches assigned to courts", security: [{ bearerAuth: [] }],
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
-        responses: { "200": { description: "Matches and the referee's availability requests" }, "403": { description: "Referee role required" } }
+        responses: { "200": { description: "Matches with targetScore and the referee's availability requests" }, "403": { description: "Referee role required" } }
       }
     },
     "/api/referee/matches/{id}/availability": {
@@ -884,6 +925,19 @@ export const openApiSpec = {
         responses: { "200": { description: "Referee selected" }, "404": { description: "Pending availability not found" }, "409": { description: "Match cannot be assigned" } }
       }
     },
+    "/api/referee/matches/{id}": {
+      get: {
+        tags: ["Referee"],
+        summary: "Read the match assigned to this referee",
+        description: "Includes targetScore for this phase so the scorer knows when the game is over.",
+        security: [{ bearerAuth: [] }],
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+        responses: {
+          "200": { description: "Match with targetScore" },
+          "403": { description: "Referee is not assigned to this match" }
+        }
+      }
+    },
     "/api/referee/matches/{id}/report": {
       post: {
         tags: ["Referee"],
@@ -895,7 +949,7 @@ export const openApiSpec = {
         responses: {
           "201": { description: "Report stored, match completed and the court left free" },
           "200": { description: "Idempotent replay, or a report accepted for an already completed match" },
-          "400": { description: "Invalid payload, a draw, over-attribution, or a player outside the match" },
+          "400": { description: "Invalid payload, a draw, a winner below the target score, over-attribution, or a player outside the match" },
           "403": { description: "Referee is not assigned to this match" },
           "409": { description: "A different report exists, or the match cannot be reported" }
         }
@@ -913,7 +967,7 @@ export const openApiSpec = {
         description: "The paper fallback for a court with no tablet. Same semantics as the referee submission.",
         security: [{ bearerAuth: [] }],
         requestBody: { required: true, content: { "application/json": { schema: { $ref: "#/components/schemas/MatchReportSubmitRequest" } } } },
-        responses: { "201": { description: "Report stored and match completed" }, "200": { description: "Idempotent replay, or a report for an already completed match" }, "409": { description: "A different report exists, or the match cannot be reported" } }
+        responses: { "201": { description: "Report stored and match completed" }, "200": { description: "Idempotent replay, or a report for an already completed match" }, "400": { description: "Invalid payload, a draw, or a winner below the target score" }, "409": { description: "A different report exists, or the match cannot be reported" } }
       },
       put: {
         tags: ["MatchReports"],

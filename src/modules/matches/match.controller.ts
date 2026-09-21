@@ -16,6 +16,7 @@ import {
   buildAvailabilityMap,
   completeMatch
 } from "./matchQueue.service";
+import { presentMatch, presentMatches } from "./matchTargetScore";
 
 interface MatchReferenceTeam {
   players: Array<{ registrationId: unknown }>;
@@ -86,7 +87,7 @@ export const createMatch = async (req: Request, res: Response): Promise<void> =>
     scheduledAt: new Date(body.scheduledAt),
     status: body.status ?? "scheduled"
   });
-  res.status(201).json({ message: "Match created", match });
+  res.status(201).json({ message: "Match created", match: await presentMatch(match) });
 };
 
 export const listMatches = async (req: Request, res: Response): Promise<void> => {
@@ -96,10 +97,14 @@ export const listMatches = async (req: Request, res: Response): Promise<void> =>
     .sort({ scheduledAt: 1, queuePosition: 1 });
   const availability = await buildAvailabilityMap(matches);
   res.status(200).json({
-    matches: matches.map((match) => ({
-      ...match.toJSON(),
-      availability: availability.get(String(match._id))
-    }))
+    matches: await presentMatches(
+      matches.map((match) => ({
+        ...match.toJSON(),
+        tournamentId: match.tournamentId,
+        phase: match.phase,
+        availability: availability.get(String(match._id))
+      }))
+    )
   });
 };
 
@@ -113,7 +118,10 @@ export const getMatch = async (req: Request, res: Response): Promise<void> => {
 
   const availability = await buildAvailabilityMap([match]);
   res.status(200).json({
-    match: { ...match.toJSON(), availability: availability.get(String(match._id)) }
+    match: {
+      ...(await presentMatch(match)),
+      availability: availability.get(String(match._id))
+    }
   });
 };
 
@@ -143,7 +151,7 @@ export const updateMatch = async (req: Request, res: Response): Promise<void> =>
     ...(body.scheduledAt && { scheduledAt: new Date(body.scheduledAt) })
   });
   await match.save();
-  res.status(200).json({ message: "Match updated", match });
+  res.status(200).json({ message: "Match updated", match: await presentMatch(match) });
 };
 
 export const deleteMatch = async (req: Request, res: Response): Promise<void> => {
@@ -166,12 +174,16 @@ export const assignQueuedMatch = async (req: Request, res: Response): Promise<vo
   const { id } = idParamsSchema.parse(req.params);
   const { courtId } = assignMatchSchema.parse(req.body);
   const match = await assignMatchToCourt(id, courtId);
-  res.status(200).json({ message: "Match assigned", match });
+  res.status(200).json({ message: "Match assigned", match: await presentMatch(match) });
 };
 
 export const completeQueuedMatch = async (req: Request, res: Response): Promise<void> => {
   const { id } = idParamsSchema.parse(req.params);
   const { scoreA, scoreB } = completeMatchSchema.parse(req.body);
   const result = await completeMatch(id, scoreA, scoreB);
-  res.status(200).json({ message: "Match completed", ...result });
+  res.status(200).json({
+    message: "Match completed",
+    ...result,
+    match: await presentMatch(result.match)
+  });
 };

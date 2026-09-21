@@ -2,6 +2,7 @@ import mongoose, { type ClientSession, type HydratedDocument } from "mongoose";
 import { ApiError } from "../../utils/ApiError";
 import { MatchModel, type MatchDocument } from "../matches/match.model";
 import { completeMatchWithSession } from "../matches/matchQueue.service";
+import { assertWinningScoreReachesTarget, targetScoreForPhase } from "../matches/matchTargetScore";
 import { recomputeRegistrationAggregates } from "../registrations/registrationAggregates.service";
 import { findEnabledCourt, loadTournament } from "../tournaments/tournament.guards";
 import {
@@ -157,6 +158,12 @@ export const submitMatchReport = async (
       );
 
       if (lateReport) {
+        const tournament = await loadTournament(String(match.tournamentId), session);
+        assertWinningScoreReachesTarget(
+          body.scoreA,
+          body.scoreB,
+          targetScoreForPhase(tournament, match.phase)
+        );
         match.set({ scoreA: body.scoreA, scoreB: body.scoreB });
         await match.save({ session });
       } else {
@@ -251,8 +258,8 @@ export const correctMatchReport = async (
         throw new ApiError(409, "Only a completed match can be corrected");
       }
 
+      const tournament = await loadTournament(String(match.tournamentId), session);
       if (match.phase === "qualification") {
-        const tournament = await loadTournament(String(match.tournamentId), session);
         if (
           tournament.status === "finals" ||
           (tournament.status === "completed" && (tournament.finals?.totalMatches ?? 0) > 0)
@@ -263,6 +270,11 @@ export const correctMatchReport = async (
           );
         }
       }
+      assertWinningScoreReachesTarget(
+        body.scoreA,
+        body.scoreB,
+        targetScoreForPhase(tournament, match.phase)
+      );
 
       const content = buildReportContent(match, body);
       const existing = await MatchReportModel.findOne({ matchId }).session(session);
@@ -373,7 +385,14 @@ export const loadMatchReport = async (matchId: string): Promise<MatchReportEntit
 };
 
 export interface RefereeContext {
-  tournament: { _id: string; name: string; status: string; winPoints: number };
+  tournament: {
+    _id: string;
+    name: string;
+    status: string;
+    winPoints: number;
+    qualificationTargetScore: number;
+    finalsTargetScore: number;
+  };
   court: { _id: string; name: string };
   match: MatchEntity | null;
   report: {
@@ -404,7 +423,9 @@ export const loadRefereeContext = async (scope: RefereeScope): Promise<RefereeCo
       _id: String(tournament._id),
       name: tournament.name,
       status: tournament.status,
-      winPoints: tournament.winPoints
+      winPoints: tournament.winPoints,
+      qualificationTargetScore: tournament.qualificationTargetScore,
+      finalsTargetScore: tournament.finalsTargetScore
     },
     court: { _id: String(court._id), name: court.name },
     match,

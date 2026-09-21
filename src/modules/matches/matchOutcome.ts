@@ -5,7 +5,8 @@ export interface MatchOutcome {
   teamA: MatchTeam;
   teamB: MatchTeam;
   // null only for a level score, which the format makes impossible: a game is
-  // played to a target score and the first side to reach it wins.
+  // played to Tournament.qualificationTargetScore or finalsTargetScore and the
+  // first side to reach it wins. A 2-point basket may overshoot the target.
   winnerSide: MatchSide | null;
 }
 

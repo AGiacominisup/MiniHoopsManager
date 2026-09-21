@@ -54,7 +54,8 @@ export interface MatchReportBodyInput {
 // anything the tablet is unable to record.
 const refineReportBody = (body: MatchReportBodyInput, ctx: z.RefinementCtx): void => {
   // A game is played to a target score and the first side to reach it wins, so
-  // a level score is an input error, not a result.
+  // a level score is an input error, not a result. Reaching the target itself
+  // is checked later against the tournament setting for this phase.
   if (body.scoreA === body.scoreB) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,

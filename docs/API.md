@@ -148,9 +148,10 @@ Completing the last qualification match does **not** close the tournament or ope
 back office reads `finalsReadiness` on `GET /tournaments/:id/setup` and calls generate when every
 qualification match is completed **and** has a report.
 
-Anything other than `draft` means the roster, courts, configuration and `winPoints` are locked.
-`finalGroups` stay editable during `qualification` so staff can add enough named groups before
-generate; they lock once status is `finals` or `completed`.
+Anything other than `draft` means the roster, courts, configuration, `winPoints` and
+`qualificationTargetScore` are locked. `finalsTargetScore` can still be changed until a final match
+is assigned or completed. `finalGroups` stay editable during `qualification` so staff can add enough
+named groups before generate; they lock once status is `finals` or `completed`.
 `winPoints` is kept for compatibility and is not used to compute standings. Ranking uses a fixed
 formula on the player's **best N qualification games**, where N is
 `qualificationAppearancesPerPlayer` (see `rankingPoints` on Registration).
@@ -160,7 +161,10 @@ formula on the player's **best N qualification games**, where N is
 The first supported format is always individual rotating-teams `3v3`. Teams are temporary match
 snapshots, not persistent entities. A tournament is prepared and started with this flow:
 
-1. Create the tournament with its courts and `qualificationAppearancesPerPlayer`. Dates are optional.
+1. Create the tournament with its courts, `qualificationAppearancesPerPlayer` and
+  `qualificationTargetScore` (first side to this score wins a qualification game). Optionally set
+  `finalsTargetScore` now; it defaults to the qualification target and can be changed later, until a
+  final is on a court. Dates are optional.
 2. Build the roster. `GET /tournaments/:id/available-players` returns everyone not yet registered;
   `POST /tournaments/:id/registrations/bulk` associates a selection, `DELETE` on the same path
   removes one. To add a player who does not exist yet, `POST /players` first and then associate the
@@ -287,6 +291,8 @@ export interface Tournament {
   endDate?: string;
   category?: string;
   winPoints: number;
+  qualificationTargetScore: number; // first side to this score wins a qualification game
+  finalsTargetScore: number;        // first side to this score wins a final; editable until a final starts
   status: TournamentStatus;
   configuration: {
     gameFormat: "3v3";
@@ -339,18 +345,24 @@ Create payload:
   "endDate": "2026-09-12T18:00:00.000Z",
   "category": "U12",
   "winPoints": 10,
+  "qualificationTargetScore": 13,
+  "finalsTargetScore": 13,
   "courts": [{ "name": "Court 1" }],
   "finalGroups": [{ "themeName": "Gold", "level": 1 }]
 }
 ```
 
-Only `name` is required. `startDate` and `endDate` are optional; when both are supplied, `endDate`
-cannot precede `startDate`. `status` is not accepted — a new tournament always starts as `draft`. A
-`PATCH` accepts any non-empty subset of the remaining fields, except that `configuration`, `courts`
-and `winPoints` are refused with `409` once the tournament has started (`winPoints` no longer affects
-standings; ranking uses the formula on Registration). `finalGroups` can still be patched during
-`qualification` so the roster of named groups matches `ceil(checkedIn / 6)` before generate; they are
-refused with `409` once finals exist. Deletion cascades: every match,
+`name` and `qualificationTargetScore` are required (`1`–`99`). `finalsTargetScore` is optional and
+defaults to `qualificationTargetScore`. `startDate` and `endDate` are optional; when both are supplied,
+`endDate` cannot precede `startDate`. `status` is not accepted — a new tournament always starts as
+`draft`. A `PATCH` accepts any non-empty subset of the remaining fields, except that `configuration`,
+`courts`, `winPoints` and `qualificationTargetScore` are refused with `409` once the tournament has
+started (`winPoints` no longer affects standings; ranking uses the formula on Registration).
+`finalsTargetScore` can still be patched during `draft` and `qualification`, and after finals are
+generated for as long as every final is still `queued`; it is refused with `409` once a final is
+`ready`, `in_progress` or `completed`, or the tournament is `completed`. `finalGroups` can still be
+patched during `qualification` so the roster of named groups matches `ceil(checkedIn / 6)` before
+generate; they are refused with `409` once finals exist. Deletion cascades: every match,
 match report, registration and court access code of the tournament is removed in a single transaction,
 and the response `summary` reports how many of each were deleted. Players are never deleted, only their
 registrations for that tournament.
@@ -565,6 +577,7 @@ export interface Match {
   queuePosition?: number;
   scoreA: number;
   scoreB: number;
+  targetScore: number; // derived from the tournament: qualificationTargetScore or finalsTargetScore
   teams: Array<{
     side: "A" | "B";
     players: MatchPlayer[];
@@ -577,6 +590,12 @@ export interface Match {
 
 Every `MatchPlayer` requires at least one of `jerseyNumber` or `name`. When both are known they are
 both returned, including on the referee scorer endpoints.
+
+`targetScore` is derived at read time from the tournament: qualification matches use
+`qualificationTargetScore`, final matches use `finalsTargetScore`. It is not stored on the match.
+The scorer app uses it as the score at which the game is over (first side to reach it; a 2-point
+basket may finish above the target). Report and paper complete refuse a winner below the target with
+`400 Winning score must reach the target of <n>`.
 
 | Method | Path | Response |
 | --- | --- | --- |
@@ -679,9 +698,11 @@ poll.
 
 ### Reporting from the scorer app
 
-After login, the referee loads the tournament and court list, then requests availability for a match
-already assigned to a court. Once staff selects the referee, `GET /referee/matches/:id` returns the
-match. The referee then submits its report. A new match on the same court requires a
+After login, the referee loads the tournament and court list (`qualificationTargetScore` and
+`finalsTargetScore` are on each tournament). Once staff selects the referee,
+`GET /referee/matches/:id` returns the match, including `targetScore` for this phase. The tablet
+treats that as the finish line: disable Submit while the scores are level or the leader is below
+`targetScore`. The referee then submits its report. A new match on the same court requires a
 new availability request and staff selection.
 
 Match payload shape (generated finals use this composition; `POST /matches` refuses both
@@ -739,7 +760,7 @@ can operate a match only after staff selects that referee for it.
   | Method | Path | Role | Response |
   | --- | --- | --- | --- |
   | `POST` | `/auth/referee/login` | public | `{ token, user }` |
-  | `GET` | `/referee/tournaments` | `referee` | `{ tournaments }` with courts |
+  | `GET` | `/referee/tournaments` | `referee` | `{ tournaments }` with courts and target scores |
   | `GET` | `/referee/tournaments/:id/matches` | `referee` | `{ matches }` with own availability |
   | `POST` | `/referee/matches/:id/availability` | `referee` | `{ availability }` |
   | `DELETE` | `/referee/matches/:id/availability` | `referee` | `{ availability }` |
@@ -761,9 +782,11 @@ receives `403`.
 
 ### Reporting from the scorer app
 
-After login, the referee loads the tournament and court list, then requests availability for a match
-already assigned to a court. Once staff selects the referee, `GET /referee/matches/:id` returns the
-match. The referee then submits its report. A new match on the same court requires a
+After login, the referee loads the tournament and court list (`qualificationTargetScore` and
+`finalsTargetScore` are on each tournament). Once staff selects the referee,
+`GET /referee/matches/:id` returns the match, including `targetScore` for this phase. The tablet
+treats that as the finish line: disable Submit while the scores are level or the leader is below
+`targetScore`. The referee then submits its report. A new match on the same court requires a
 new availability request and staff selection.
 
 ## Match reports
@@ -866,7 +889,7 @@ is what closes it.
 | --- | --- |
 | `201` | Report stored and match completed |
 | `200` | Idempotent replay (`idempotent: true`), or a report accepted for an already completed match |
-| `400` | Invalid payload, a draw, over-attribution, or a player/assist/award outside the match |
+| `400` | Invalid payload, a draw, a winner below the target score, over-attribution, or a player/assist/award outside the match |
 | `401` | Missing or invalid token, or the court session was revoked |
 | `403` | `Match does not belong to the bound court` |
 | `404` | `Match not found` |
@@ -888,7 +911,9 @@ Standings are always computed from the match score, never from the events, so an
 degrades only the box score.
 
 Draws are refused with `400 Draws are not supported in the current tournament format`: a match is
-played to a target score, so the tablet should disable Submit while the scores are level.
+played to `targetScore`, so the tablet should disable Submit while the scores are level. A winner
+below `targetScore` is refused with `400 Winning score must reach the target of <n>`. Overshooting
+the target (a 2-point basket from `targetScore - 1`) is accepted.
 
 MVP and fair play may be the same player, may be on the losing side, and may have scored nothing. Both
 are optional.

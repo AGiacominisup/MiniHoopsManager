@@ -4,6 +4,7 @@ import { recomputeRegistrationAggregates } from "../registrations/registrationAg
 import { findEnabledCourt, loadTournament } from "../tournaments/tournament.guards";
 import { TournamentModel } from "../tournaments/tournament.model";
 import { MatchModel, type MatchDocument } from "./match.model";
+import { assertWinningScoreReachesTarget, targetScoreForPhase } from "./matchTargetScore";
 
 export { resolveMatchOutcome } from "./matchOutcome";
 export type { MatchOutcome } from "./matchOutcome";
@@ -222,6 +223,13 @@ export const completeMatchWithSession = async (
   if (!completable || !match.courtId) {
     throw new ApiError(409, "Only a ready or in-progress match can be completed");
   }
+
+  const tournament = await loadTournament(String(match.tournamentId), session);
+  assertWinningScoreReachesTarget(
+    scoreA,
+    scoreB,
+    targetScoreForPhase(tournament, match.phase)
+  );
 
   match.set({
     status: "completed",

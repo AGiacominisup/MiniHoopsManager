@@ -2,6 +2,7 @@ import type { Request, Response } from "express";
 import { ApiError } from "../../utils/ApiError";
 import { idParamsSchema } from "../../utils/validation";
 import { MatchModel } from "./match.model";
+import { presentMatch } from "./matchTargetScore";
 import {
   assertAssignedReferee,
   listMatchRefereeAvailabilities,
@@ -49,11 +50,15 @@ export const assignMatchReferee = async (req: Request, res: Response): Promise<v
   const { refereeUserId } = assignMatchRefereeSchema.parse(req.body);
   const availability = await selectMatchReferee(id, refereeUserId, userId(req));
   const match = await MatchModel.findById(id).populate("refereeUserId", "email name");
-  res.status(200).json({ message: "Referee assigned", availability, match });
+  res.status(200).json({
+    message: "Referee assigned",
+    availability,
+    match: match ? await presentMatch(match) : match
+  });
 };
 
 export const getAssignedMatch = async (req: Request, res: Response): Promise<void> => {
   const { id } = idParamsSchema.parse(req.params);
   const match = await assertAssignedReferee(id, userId(req));
-  res.status(200).json({ match });
+  res.status(200).json({ match: await presentMatch(match) });
 };
